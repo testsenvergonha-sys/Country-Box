@@ -22,6 +22,11 @@
 - Start a game directly, skipping the launcher: `--returns` or `--freeze` (also `--play returns` / `--play freeze`),
   handy as Steam launch options or in a desktop shortcut. If the game can't start yet, a window tells you why
   ([#6](https://github.com/zWalt01/Country-Box/issues/6)).
+- RomFS mods (`MP4_ROMFS_MODS`) work again: an overlay that replaces a game file was always refused, because the
+  original was hashed from a packed image that these builds don't use. Thanks to cat99sky
+  ([#9](https://github.com/zWalt01/Country-Box/pull/9)).
+- For developers: the `MP4_TRACE=perf` slow-frame line also shows `drain` and `other` (the frame time not spent
+  waiting), so a slow frame's time adds up ([#12](https://github.com/zWalt01/Country-Box/issues/12)).
 
 ## 1.0.5 — 2026-11-14
 
