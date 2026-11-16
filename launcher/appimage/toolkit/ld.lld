@@ -1,0 +1,4 @@
+#!/bin/sh
+# Country-Box build kit: lld (clang finds it next to itself; this one is for the tool check)
+d=${0%/*}; [ "$d" = "$0" ] && d=.; K=$(cd "$d/.." && pwd)
+exec "$K/llvm/bin/ld.lld" "$@"

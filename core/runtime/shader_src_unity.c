@@ -14,6 +14,7 @@
 // 0 vertex, 1 fragment, 5 compute) directly followed by its code (magic 0x12345678, compute 0x12345679). Every match is
 // handed on; shader_prep.c keeps the ones the list names (by code hash). .resS / .resource (textures, meshes, audio)
 // and StreamingAssets/ (movies) hold none and are skipped.
+#define _GNU_SOURCE   // memmem: glibc 2.35 (the build kit's) declares it only for _GNU_SOURCE
 #include <dirent.h>
 #include <fcntl.h>
 #include <stdio.h>

@@ -13,6 +13,7 @@
 // offset of the chunk whose first byte is a valid deflate block header and keeping those whose output starts with the
 // code magic: 4.4 MB in about a second, and the count matches the table. The game reads the pools at the same layout
 // (CShaderCore_NVN::LoadBinaryPools, main+0x53f48), so a program here is the one the game hands to NVN.
+#define _GNU_SOURCE   // memmem: glibc 2.35 (the build kit's) declares it only for _GNU_SOURCE
 #include <dirent.h>
 #include <stdio.h>
 #include <stdlib.h>

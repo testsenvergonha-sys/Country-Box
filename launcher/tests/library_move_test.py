@@ -16,7 +16,7 @@ import sys
 import tempfile
 from pathlib import Path
 
-ODD = "the maintainer's Games (ñ) $HOME"
+ODD = "Player's Games (ñ) $HOME"
 failures = 0
 
 

@@ -32,6 +32,11 @@ const PrepProfile *prep_profile(const std::string &game);
 // else prep/ next to the launcher binary, else <share>/country-box/prep, else the repository (development).
 std::string prep_payload_dir(const std::string &exe);
 
+// The build kit that travels inside the AppImage (launcher/appimage/toolkit-build.sh): clang, lld, ninja, pkg-config,
+// a sysroot and the lifter's Python, for machines without a compiler (SteamOS). CB_TOOLKIT, else toolkit/ next to
+// the launcher binary, else <share>/country-box/toolkit; "" when there is none.
+std::string toolkit_dir(const std::string &exe);
+
 class PrepareJob {
 public:
     // ShadersOnly re-runs just the shader preparation (the card's "Prepare shaders" when only that is left).
@@ -75,12 +80,16 @@ private:
     bool place_runtime_files();
     bool do_shaders();
     bool child(const std::vector<std::string> &argv, const std::string &cwd, const char *parse_what);
+    bool use_toolkit();      // links the kit at a fixed path and puts it first on PATH
+    void drop_toolkit();     // undoes use_toolkit(): the link goes, PATH and CB_PYTHON come back
     void set_line_text(const std::string &text) {
         std::lock_guard<std::mutex> lock(line_mu_);
         line_ = text;
     }
 
     std::string home_, game_, copy_, manifest_id_, version_key_, build_dir_, gen_dir_, payload_, log_, toolchain_;
+    std::string toolkit_, toolkit_link_, saved_path_, saved_python_;
+    bool toolkit_used_ = false, had_python_ = false;
     Mode mode_;
     double stage_elapsed_base_ = 0;
     volatile int cancel_flag_ = 0;

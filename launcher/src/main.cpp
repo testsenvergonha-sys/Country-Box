@@ -13,7 +13,10 @@
 //   country-box-launcher --import-build GAME PATH          install a build Prepare made on another computer (folder
 //                                                          or .tar/.tar.gz/.tar.zst), checked against this copy
 //   country-box-launcher --set-build GAME DIR              use the game binary in DIR (DIR/country-box)
-//   country-box-launcher --play GAME                       start the game and wait for it
+//   country-box-launcher --play GAME                       start the game and wait for it, without the hub (Steam
+//                                                          launch options, shortcuts); --returns / --freeze for short.
+//                                                          Without a terminal, a game that can't start says why in
+//                                                          a window
 //   country-box-launcher --move-library DIR                move the library (builds, saves, logs) to DIR, or to
 //                                                          DIR/Country-Box when DIR has files; later runs use it
 //
@@ -31,6 +34,7 @@
 #include <cstring>
 #include <string>
 #include <thread>
+#include <unistd.h>
 #include <vector>
 
 #include "imgui.h"
@@ -59,7 +63,8 @@ static void usage() {
             "                            --set-build GAME DIR | --prepare GAME [--shaders] | --import-build GAME PATH |\n"
             "                            --play GAME | --check-update | --update | --setup GAME=FOLDER... (GAME: dkcrhd, dkctf or auto) |\n"
             "                            --move-library DIR\n"
-            "games: dkcrhd (Returns HD), dkctf (Tropical Freeze)\n"
+            "       country-box-launcher --returns | --freeze           (the same as --play returns / --play freeze)\n"
+            "games: returns or dkcrhd (Returns HD), freeze or dkctf (Tropical Freeze)\n"
             "update channel: CB_UPDATE_API or <home>/update.ini api_url (default: this project's GitHub Releases)\n");
 }
 
@@ -253,6 +258,7 @@ static int run_hub(Library &lib, int w, int h, bool fullscreen, const std::strin
         SDL_RenderPresent(ren);
         frame++;
         if (!steps.empty() && step >= steps.size() && wait_frames <= 0) running = false;
+        if (ui.wants_quit()) running = false;   // B on the Games tab, or "Restart now" after an update started the new one
     }
     ImGui_ImplSDLRenderer3_Shutdown();
     ImGui_ImplSDL3_Shutdown();
@@ -328,6 +334,14 @@ static int run_setup(Library &lib, const std::vector<std::string> &args) {
             std::this_thread::sleep_for(std::chrono::milliseconds(500));
         }
         const PrepareJob::Outcome &out = job.outcome();
+        lib.refresh(*g);
+        if (!out.ok && out.kind == "missing_tools" && !g->exe.empty() &&
+            (g->state == GameState::Ready || g->state == GameState::NeedsShaders || g->state == GameState::UpdateAvailable)) {
+            // a machine without compilers (Steam Deck) keeps playing the build it has; the update waits for Prepare
+            fprintf(stderr, "launcher: %s: %s Playing the build already here (Country-Box %s).\n", name.c_str(),
+                    out.headline.c_str(), g->build_version.c_str());
+            continue;
+        }
         if (!out.ok) {
             fprintf(stderr, "launcher: %s: %s %s %s (log: %s)\n", name.c_str(), out.headline.c_str(), out.explain.c_str(),
                     out.hint.c_str(), out.log.c_str());
@@ -336,6 +350,13 @@ static int run_setup(Library &lib, const std::vector<std::string> &args) {
     }
     say(1, "Ready to play");
     return 0;
+}
+
+// Why --play could not start a game. It is mostly run from a Steam shortcut or a desktop icon, where nobody reads
+// stderr, so without a terminal the reason also comes up in a window.
+static void tell_player(const std::string &title, const std::string &text) {
+    fprintf(stderr, "launcher: %s\n", text.c_str());
+    if (!isatty(STDERR_FILENO)) SDL_ShowSimpleMessageBox(SDL_MESSAGEBOX_ERROR, title.c_str(), text.c_str(), nullptr);
 }
 
 int main(int argc, char **argv) {
@@ -369,6 +390,8 @@ int main(int argc, char **argv) {
                  a == "--prepare" || a == "--import-build" || a == "--check-update" || a == "--update" || a == "--setup" ||
                  a == "--move-library")
             action = a;
+        else if (a == "--returns" || a == "--freeze")   // the short launch options: --play returns / --play freeze
+            action = "--play", args.insert(args.begin(), a.substr(2));
         else if (a == "--help" || a == "-h") return usage(), 0;
         else if (a[0] == '-') return usage(), 2;
         else args.push_back(a);
@@ -417,7 +440,10 @@ int main(int argc, char **argv) {
     }
     Game *g = args.empty() ? nullptr : lib.find(args[0]);
     if (action != "--status" && !g) {
-        fprintf(stderr, "launcher: unknown game '%s'\n", args.empty() ? "" : args[0].c_str());
+        if (action == "--play")
+            tell_player("Country-Box", "Unknown game '" + (args.empty() ? std::string() : args[0]) +
+                                           "'. Use --play returns or --play freeze.");
+        else fprintf(stderr, "launcher: unknown game '%s'\n", args.empty() ? "" : args[0].c_str());
         return usage(), 2;
     }
     if (action == "--status") {
@@ -493,7 +519,10 @@ int main(int argc, char **argv) {
     }
     if (action == "--play") {
         std::string err;
-        if (!lib.play(*g, &err)) return fprintf(stderr, "launcher: %s\n", err.c_str()), 1;
+        if (!lib.play(*g, &err)) {
+            std::string name = g->manifest ? g->manifest->name : g->id;
+            return tell_player(name, name + " can't start yet: " + err + "\nOpen Country-Box to finish setting it up."), 1;
+        }
         fprintf(stderr, "launcher: %s started (pid %d), log %s\n", g->id.c_str(), (int)g->pid, g->log.c_str());
         int st = 0;
         while (proc_poll(g->pid, &st) == 1) SDL_Delay(200);

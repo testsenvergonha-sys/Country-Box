@@ -1,0 +1,6 @@
+Country-Box build kit. Prepare uses it only on a computer without clang, lld, ninja and pkg-config (SteamOS):
+straight from the mounted AppImage, through ~/.cache/country-box/toolkit (a link that exists only while a game is
+being prepared). Nothing is installed. Contents and licenses: LLVM (Apache-2.0 with LLVM exception), the Ubuntu
+22.04 development files of glibc (LGPL), libstdc++ (GPL with runtime exception), Vulkan headers (Apache-2.0),
+Opus and libvpx (BSD), zlib (zlib), SDL 3 (zlib), CPython (PSF), numpy (BSD), capstone (BSD), unicorn (GPL-2.0),
+ninja (Apache-2.0).

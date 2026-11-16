@@ -6,6 +6,9 @@
 #   usr/lib/libSDL3.so.0                                     SDL $SDL_TAG compilada en ese contenedor
 #                                                            (appimage/container-build.sh; docker o podman)
 #   usr/share/country-box/prep/                              launcher/make_prep_payload.py (traductor: core/build/xlate)
+#   usr/share/country-box/toolkit/                           el kit de compilación para máquinas sin compilador (SteamOS):
+#                                                            appimage/toolkit-build.sh en el mismo contenedor; ~155 MB
+#                                                            comprimidos (LLVM 98, Python del lifter 42, sysroot 14)
 # Nada derivado de un juego entra (ver make_prep_payload.py).
 #
 #   sh launcher/make_appimage.sh [OUT_DIR]     (por defecto build/; necesita appimagetool en el PATH o en ~/.local/bin)
@@ -39,6 +42,32 @@ else
         -e HOST_UID="$(id -u)" -e HOST_GID="$(id -g)" ubuntu:22.04 sh /src/launcher/appimage/container-build.sh
     cp "$OUT/appimage/container/country-box-launcher" "$APPDIR/usr/bin/"
     cp "$OUT/appimage/container/libSDL3.so.0" "$APPDIR/usr/lib/"
+    # el kit: entradas fijadas por versión y SHA-256, bajadas una vez a CB_TOOLKIT_CACHE (LLVM pesa 1.9 GB)
+    CACHE=${CB_TOOLKIT_CACHE:-$OUT/toolkit-cache}
+    mkdir -p "$CACHE"
+    fetch() {   # nombre url sha256
+        if [ ! -f "$CACHE/$1" ]; then
+            curl -fsSL -o "$CACHE/$1.part" "$2" || { echo "make_appimage: no pude bajar $2" >&2; exit 1; }
+            mv "$CACHE/$1.part" "$CACHE/$1"
+        fi
+        echo "$3  $CACHE/$1" | sha256sum -c --quiet || { echo "make_appimage: $1 no coincide con su SHA-256" >&2; exit 1; }
+    }
+    fetch LLVM-23.1.5-Linux-X64.tar.xz \
+        https://github.com/llvm/llvm-project/releases/download/llvmorg-23.1.5/LLVM-23.1.5-Linux-X64.tar.xz \
+        f72edb0b36580ece7f52e23858f00c18fad4e87395ea7ad05d7e55c39f8fc78a
+    fetch cpython-3.12.16-20261110.tar.gz \
+        https://github.com/astral-sh/python-build-standalone/releases/download/20261110/cpython-3.12.16%2B20261110-x86_64-unknown-linux-gnu-install_only_stripped.tar.gz \
+        6a9e62dad033790aef722dbd370e0ce76ce17b73627ba3ae679f537049350b39
+    fetch linux-api-headers-7.3-1-x86_64.pkg.tar.zst \
+        https://archive.archlinux.org/packages/l/linux-api-headers/linux-api-headers-7.3-1-x86_64.pkg.tar.zst \
+        a5a6f5fc8922ef454c54e65e321906183e6606acaadaf416896dcbc44f2194ed
+    # podman sin root: el root del contenedor ya es este usuario (un chown a su uid lo mandaría a un subuid)
+    case "$ENGINE" in *podman) KUID=0 KGID=0 ;; *) KUID=$(id -u) KGID=$(id -g) ;; esac
+    "$ENGINE" run --rm -v "$ROOT:/src:ro" -v "$CACHE:/cache:ro" -v "$OUT/appimage/container:/out" \
+        -e LLVM_TAR=LLVM-23.1.5-Linux-X64.tar.xz -e PY_TAR=cpython-3.12.16-20261110.tar.gz \
+        -e KHDR_PKG=linux-api-headers-7.3-1-x86_64.pkg.tar.zst -e VK_TAG=v1.4.363 -e H264_TAG=v2.6.0 \
+        -e SDL_TAG="$SDL_TAG" -e HOST_UID="$KUID" -e HOST_GID="$KGID" ubuntu:22.04 sh /src/launcher/appimage/toolkit-build.sh
+    cp -a "$OUT/appimage/container/toolkit" "$APPDIR/usr/share/country-box/toolkit"
 fi
 python3 "$ROOT/launcher/make_prep_payload.py" "$APPDIR/usr/share/country-box/prep"
 # la garantía: ningún programa o biblioteca de la AppImage pide una glibc más nueva que 2.35

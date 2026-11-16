@@ -60,8 +60,8 @@ const char *game_state_label(GameState s) {
     case GameState::CopyMissing: return "Copy not found";
     case GameState::NeedsCheck: return "Needs a new check";
     case GameState::NeedsBuild:
-    case GameState::NeedsShaders:
-    case GameState::UpdateAvailable: return "Needs preparing";   // Prepare (milestone 2) covers all three
+    case GameState::NeedsShaders: return "Needs preparing";   // Prepare (milestone 2) covers both
+    case GameState::UpdateAvailable: return "Update ready";      // still plays; Prepare is optional
     case GameState::Ready: return "Ready";
     }
     return "?";
@@ -96,7 +96,15 @@ Library::Library(std::string home) : home_(std::move(home)) {
     }
 }
 
-Game *Library::find(const std::string &id) {
+// The names a player types (launch options, shortcuts: "--play returns") next to the ids the files use.
+static std::string game_id_of(const std::string &name) {
+    if (name == "returns" || name == "returns-hd") return "dkcrhd";
+    if (name == "freeze" || name == "tropical-freeze") return "dkctf";
+    return name;
+}
+
+Game *Library::find(const std::string &name) {
+    std::string id = game_id_of(name);
     for (auto &g : games_)
         if (g.id == id) return &g;
     return nullptr;
@@ -209,7 +217,8 @@ void Library::refresh(Game &g) {
     }
     if (!g.build_version.empty() && version_compare(g.build_version, launcher_version()) < 0) {
         g.state = GameState::UpdateAvailable;
-        g.detail = "Country-Box " + launcher_version() + " is here. Prepare again — your saves and settings stay.";
+        // the old build still plays: an update never takes PLAY away (a Steam Deck can't build, issue of 2026-11-14)
+        g.detail = "Plays as before. Prepare the update when you like for the newest fixes; your saves and settings stay.";
         return;
     }
     // Shaders: the game decides at start (its marker also names the GPU driver, which only it can read); here only

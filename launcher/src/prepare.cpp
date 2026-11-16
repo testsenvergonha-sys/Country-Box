@@ -170,6 +170,19 @@ std::string prep_payload_dir(const std::string &exe) {
     return "";
 }
 
+std::string toolkit_dir(const std::string &exe) {
+    auto valid = [](const std::string &p) {
+        std::error_code ec;
+        return !p.empty() && fs::is_regular_file(p + "/bin/clang", ec) && fs::is_regular_file(p + "/python/bin/python3", ec);
+    };
+    if (const char *e = getenv("CB_TOOLKIT"); e && *e) return valid(e) ? e : "";
+    std::error_code ec;
+    std::string dir = fs::path(exe).parent_path().string();
+    for (const std::string &cand : {dir + "/toolkit", dir + "/../share/country-box/toolkit"})
+        if (std::string p = fs::weakly_canonical(cand, ec).string(); valid(p)) return p;
+    return "";
+}
+
 // ---- the measured cost of each game (docs/LAUNCHER.md keeps the raw numbers and their date)
 
 // *Measured* 2026-11-12 on the reference PC (16 threads, nice -n 19): weights are the -j4 wall seconds of lift
@@ -196,6 +209,7 @@ PrepareJob::PrepareJob(std::string home, const Game &g, Mode mode)
     char exe[4096];
     ssize_t n = readlink("/proc/self/exe", exe, sizeof exe - 1);
     payload_ = prep_payload_dir(n > 0 ? std::string(exe, (size_t)n) : "");
+    toolkit_ = toolkit_dir(n > 0 ? std::string(exe, (size_t)n) : "");
     thread_ = std::thread([this] { run(); });
 }
 
@@ -449,6 +463,12 @@ bool PrepareJob::preflight(std::string *python) {
     set_line_text("checking the build kit");
     payload_ = sync_payload(payload_, home_ + "/prep");
     std::string missing = missing_tools(python);
+    // Something missing and the kit is here (SteamOS has no compiler): build with the kit, straight from the AppImage
+    if (!missing.empty() && !toolkit_.empty() && use_toolkit()) {
+        std::ofstream(log_, std::ios::app) << "# build kit: " << toolkit_ << " (through " << toolkit_link_
+                                           << "); missing on this machine: " << missing << '\n';
+        missing = missing_tools(python);
+    }
     // Only the Python modules missing, and a system python3 there: make the launcher's own environment and install
     // the pinned modules into it, once (needs the network). The player never sees this as an error.
     if (missing == "python3 with capstone, unicorn and numpy" && !getenv("CB_PYTHON") && own_python().empty()) {
@@ -640,6 +660,18 @@ bool PrepareJob::place_runtime_files() {
     // true whatever happened around it (and after an import that came without them).
     std::error_code ec;
     fs::create_directories(build_dir_, ec);
+    // a game built with the kit finds SDL next to itself (rpath $ORIGIN): the kit's, not the machine's, which may be
+    // older than the headers it was compiled against (SteamOS 3.9: SDL 3.4.12; the kit: 3.4.18)
+    if (toolkit_used_) {
+        fs::copy_file(toolkit_link_ + "/lib/libSDL3.so.0", build_dir_ + "/libSDL3.so.0", fs::copy_options::overwrite_existing, ec);
+        if (ec) {
+            outcome_.kind = "compile";
+            outcome_.headline = "The game is built, but SDL could not be placed next to it.";
+            outcome_.explain = "Copying libSDL3.so.0 into " + build_dir_ + " failed (" + ec.message() + ").";
+            outcome_.hint = "Check that the drive is writable, then Prepare again: nothing will be rebuilt.";
+            return false;
+        }
+    }
     std::string xlate = payload_ + "/build/xlate/mp4_xlate";
     if (fs::is_regular_file(xlate, ec)) {
         fs::copy_file(xlate, build_dir_ + "/mp4_xlate", fs::copy_options::overwrite_existing, ec);
@@ -704,6 +736,7 @@ void PrepareJob::run() {
     if (ok && mode_ == Full) ok = do_compile(python);
     if (ok && mode_ == Full) ok = place_runtime_files();
     if (ok) ok = do_shaders();
+    drop_toolkit();
     if (outcome_.kind == "cancelled") {
         outcome_.headline = "Cancelled.";
         outcome_.explain = "Preparing stopped.";
@@ -713,6 +746,43 @@ void PrepareJob::run() {
     outcome_.log = log_;
     outcome_.elapsed_s = now_s() - t0;
     stage.store(Finished);
+}
+
+// The kit is reached through one fixed link (~/.cache/country-box/toolkit) whatever /tmp/.mount_XXXX the AppImage got
+// this time: compile commands and ninja's dependency log keep that path, so the next Prepare rebuilds only what changed
+// instead of everything. The link exists only while a game is being prepared; nothing is copied or installed.
+bool PrepareJob::use_toolkit() {
+    const char *xdg = getenv("XDG_CACHE_HOME");
+    std::string base = xdg && *xdg ? xdg : std::string(getenv("HOME") ? getenv("HOME") : "") + "/.cache";
+    std::error_code ec;
+    fs::create_directories(base + "/country-box", ec);
+    toolkit_link_ = base + "/country-box/toolkit";
+    std::string tmp = toolkit_link_ + ".new";
+    fs::remove(tmp, ec);
+    fs::create_directory_symlink(toolkit_, tmp, ec);
+    if (ec || rename(tmp.c_str(), toolkit_link_.c_str()) != 0) {
+        fs::remove(tmp, ec);
+        return false;
+    }
+    const char *path = getenv("PATH");
+    saved_path_ = path ? path : "";
+    const char *py = getenv("CB_PYTHON");
+    had_python_ = py != nullptr;
+    saved_python_ = py ? py : "";
+    setenv("PATH", (toolkit_link_ + "/bin" + (saved_path_.empty() ? "" : ":" + saved_path_)).c_str(), 1);
+    setenv("CB_PYTHON", (toolkit_link_ + "/python/bin/python3").c_str(), 1);
+    toolkit_used_ = true;
+    return true;
+}
+
+void PrepareJob::drop_toolkit() {
+    if (!toolkit_used_) return;
+    setenv("PATH", saved_path_.c_str(), 1);
+    if (had_python_) setenv("CB_PYTHON", saved_python_.c_str(), 1);
+    else unsetenv("CB_PYTHON");
+    std::error_code ec;
+    if (fs::is_symlink(toolkit_link_, ec)) fs::remove(toolkit_link_, ec);
+    toolkit_used_ = false;
 }
 
 PrepareJob::Outcome PrepareJob::run_sync(const std::string &home, const Game &g, Mode mode, bool (*progress)(void *),

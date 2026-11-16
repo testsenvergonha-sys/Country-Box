@@ -209,6 +209,7 @@ void Ui::frame(float scale, float t) {
         else if (flow_ == Flow::UpdateAsk) decline_update();
         else if (flow_ != Flow::None) finish_flow();
         else if (tab_ != Tab::Games) set_tab(Tab::Games);
+        else if (!lib_.any_running()) quit_ = true;   // B on the Games tab leaves Country-Box (Steam Deck: back to Steam)
     }
     if (flow_ == Flow::None) {
         int dir = (ImGui::IsKeyPressed(ImGuiKey_GamepadR1, false) || ImGui::IsKeyPressed(ImGuiKey_PageDown, false)) -
@@ -310,7 +311,7 @@ void Ui::draw_footer(ImVec2 mn, ImVec2 mx) {
         x += text_size(fonts.small, what).x + 30 * s_;
     };
     hint("A", "Select", art::kGood);
-    hint("B", flow_ != Flow::None ? "Back" : tab_ != Tab::Games ? "Games" : "Back", art::kBad);
+    hint("B", flow_ != Flow::None ? "Back" : tab_ != Tab::Games ? "Games" : "Exit", art::kBad);
     if (flow_ == Flow::None) {
         art::pad_glyph(dl, V(x + r * 1.2f, cy), r, "LB", alpha(art::kCream, 0.85f), fonts.small, 19 * s_);
         x += 3.0f * r;
@@ -414,7 +415,6 @@ void Ui::draw_card(Game &g, ImVec2 mn, ImVec2 mx, bool) {
             start_check(g.id, g.copy);
         break;
     case GameState::NeedsBuild:
-    case GameState::UpdateAvailable:
         if (button(id.c_str(), "PREPARE", V(mn.x + pad, by), V(bw, bh), art::kBanana, !lib_.any_running(), fonts.title))
             start_prepare(g.id);
         break;
@@ -433,7 +433,15 @@ void Ui::draw_card(Game &g, ImVec2 mn, ImVec2 mx, bool) {
         bool shaders_state = g.state == GameState::NeedsShaders;
         float half = (bw - 12 * s_) * 0.5f;
         float sy = mx.y - pad - sec_h;
-        if (prep_state) {
+        if (g.state == GameState::UpdateAvailable) {
+            // PLAY stays the main action (the old build still runs); the update is prepared here or imported
+            if (button(sid.c_str(), "Prepare update", V(mn.x + pad, sy), V(half, sec_h), IM_COL32(70, 54, 30, 255),
+                       !lib_.any_running(), fonts.body))
+                start_prepare(g.id);
+            if (button(("##import" + g.id).c_str(), "Import a build", V(mn.x + pad + half + 12 * s_, sy), V(half, sec_h),
+                       IM_COL32(70, 54, 30, 255), !lib_.any_running(), fonts.body))
+                start_import(g.id);
+        } else if (prep_state) {
             if (button(sid.c_str(), "Import a build", V(mn.x + pad, sy), V(half, sec_h), IM_COL32(70, 54, 30, 255),
                        !lib_.any_running(), fonts.body))
                 start_import(g.id);
@@ -1649,7 +1657,7 @@ void Ui::draw_about(ImVec2 mn, ImVec2 mx) {
     y += fonts.big->FontSize + 6 * s_;
     para(fonts.body, art::kCream,
          "Updates come from this project's GitHub Releases and are checked when the launcher opens. The download is "
-         "verified against its published SHA-256; saves and settings are backed up and never touched.");
+         "verified against its published SHA-256.");
     if (checker_) {
         para(fonts.body, art::kMuted, "Checking for updates…");
         button("##upd", "Check for updates", V(x, y), V(320 * s_, 54 * s_), kButton, false, fonts.body);
@@ -1670,6 +1678,9 @@ void Ui::draw_about(ImVec2 mn, ImVec2 mx) {
         if (button("##movelib", "Move library…", V(x + 340 * s_, y), V(260 * s_, 54 * s_), kButton, can, fonts.body)) start_library_browse();
     }
     y += 54 * s_ + 12 * s_;
+    // below the barrel the notes take the panel's full width: at 1280x800 (Steam Deck) the narrow column ran the
+    // credits past the panel's bottom edge
+    if (y > pmn.y + 40 * s_ + bh * 1.15f) x = pmn.x + 40 * s_, wrap = pmx.x - 30 * s_ - x;
     {   // the library's folder (relocate.h)
         std::string why = launcher_home_fixed() ? "  (set by --home or CB_LAUNCHER_HOME for this run)"
                           : lib_.any_running()  ? "  (close the game to move it)" : "";
