@@ -284,7 +284,26 @@ static int overlay_load(const char *dir, int optional) {
         Entry e = {0};
         if (known) {
             e = entry(i);
+#ifdef ROMFS_DIRECTORY
+            // Country-Box: a directory build serves the extracted RomFS, so `image` is -1 and the original is a file
+            // there; hash it exactly as the overlay file below is hashed. (romfs.bin offsets only exist in the packed
+            // build.) A size or hash mismatch still stops the start, like the packed path.
+            char orig_path[8400];
+            need(snprintf(orig_path, sizeof orig_path, "%s/%s", rt_config()->romfs, name) < (int)sizeof orig_path,
+                 "overlay original path");
+            int of = open_read(orig_path);
+            if (of < 0) BAD("RomFS overlay: the original %s cannot be opened (%s)", orig_path, strerror(errno));
+            Identity oid = identity_of(of);
+            if (oid.size != e.size) {
+                close(of);
+                BAD("RomFS overlay: the original %s has %llu bytes, the index says %llu", orig_path,
+                    (unsigned long long)oid.size, (unsigned long long)e.size);
+            }
+            sha_range(of, 0, e.size, hex, 0);
+            close(of);
+#else
             sha_range(image, e.offset, e.size, hex, 0);
+#endif
             if (strcmp(hex, orig)) BAD("RomFS overlay: the original of %s has SHA-256 %s, %s/manifest.tsv says %s",
                                        name, hex, dir, orig);
         } else {
