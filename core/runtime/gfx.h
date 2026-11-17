@@ -72,6 +72,12 @@ void gfx_shader_prepare_recorded(int threads, int procs);
 // writes <dir>/shader-prepared.bin (stage, priority, input id per variant). 0 on success.
 int gfx_shader_prepare_seed(const char *dir, int threads, int procs);
 void gfx_shader_identity(uint8_t out[32]);                  // translator + key layout identity (shader_prep.c marker)
+uint32_t gfx_shader_control_hash_len(void);                 // bytes of a control section that name a program (0x880;
+                                                            // 0x840 for Tropical Freeze: the game writes per-boot data
+                                                            // past the pools' 0x840 stride, and nothing but the program
+                                                            // hash reads them)
+int gfx_shader_code_hash(int stage, const uint8_t *control, // the program hash of a whole control section and its code
+                         const uint8_t *code, uint32_t length, uint8_t hash[32]);
 typedef struct { uint8_t iid[32]; uint8_t stage, prio; } GfxWarmEnt;   // prio 0: met in play; 1..3: prepared
 size_t gfx_shader_warm_list(GfxWarmEnt **out);              // malloc'd; recorded first, then prepared; needs recording on
 // Disk-cache load the caller owns (*owned 1: release it), or the memory cache's entry (*owned 0). NULL if not cached.

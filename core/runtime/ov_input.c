@@ -202,6 +202,21 @@ static void once(volatile long *flag, const char *fmt, uint32_t v) {
     if (!plat_atomic_xchg(flag, 1)) rt_log(fmt, v);
 }
 
+// Country-Box: the first 16 distinct values of a log line (public issue #8: Tropical Freeze's vibration handles; one
+// line per handle shows which controller and style the game drives). seen[] is 0 when unused, so a value of 0 is
+// stored as ~0u.
+typedef struct { pthread_mutex_t lock; uint32_t seen[16]; } Distinct;
+#define DISTINCT_INIT {PTHREAD_MUTEX_INITIALIZER, {0}}
+static void distinct(Distinct *d, const char *fmt, uint32_t a, uint32_t b, uint32_t v) {
+    uint32_t key = v ? v : ~0u;
+    int i, log = 0;
+    pthread_mutex_lock(&d->lock);
+    for (i = 0; i < 16 && d->seen[i] && d->seen[i] != key; i++) {}
+    if (i < 16 && !d->seen[i]) d->seen[i] = key, log = 1;
+    pthread_mutex_unlock(&d->lock);
+    if (log) rt_log(fmt, a, b, v);
+}
+
 // MP4_RUMBLE_STRENGTH (percent, 0..300, default 130; 0 = off) and MP4_RUMBLE_CURVE (exponent on the amplitude, 0.2..1.5,
 // default 0.6). HD rumble is strong at low amplitude, an ERM motor hardly turns there, so weak values are lifted by the
 // curve (0.1 -> 0.25) and the strength scales the result (saturating at 65535; 0.66 and up reach full drive at 130 %).
@@ -256,7 +271,9 @@ static void ov_vibration_handles(Cpu *c) {
         n = t[i].n < max ? t[i].n : max;
         for (int k = 0; k < n; k++) out[k] = (t[i].base | id << 8) + ((uint32_t)k << 16);
     }
-    once(&asked, "hid: the game asked for its vibration devices (first handle %#x)", n ? out[0] : 0);
+    static Distinct d = DISTINCT_INIT;
+    distinct(&d, "hid: the game asked for vibration devices of controller %#x, styles %#x: first handle %#x", id, style,
+             n ? out[0] : 0);
     ret_x(c, (uint64_t)n);
 }
 
@@ -291,12 +308,17 @@ static const uint32_t *need_handle(const void *p, const char *fn) {
     return p;
 }
 
-// The vibration device (0 left, 1 right) a handle names on the connected controller, or -1 (logged once).
+// The vibration device (0 left, 1 right) a handle names on the connected controller, or -1 (logged per handle).
+// Country-Box (public issue #8): the handle's style index is not compared. Tropical Freeze asks GetVibrationDeviceHandles
+// for the Joy-Con pair style (0x4, handles 0x5 | id << 8) of every controller id and drives only those, whatever style
+// the controller has (measured 2026-11-15: every one of its vibration calls named style index 5, so none reached the
+// gamepad); the console routes a handle to the controller of that id, and so does this.
 static int vibration_side(const uint32_t *h, const char *fn) {
     uint32_t v = *need_handle(h, fn), dev = v >> 16 & 0xff;
-    if ((v & 0xff) == pad_style_index() && (v >> 8 & 0xff) == pad_id() && dev < 2) return (int)dev;
-    static volatile long warned;
-    once(&warned, "hid: vibration call for handle %#x, not a device of the connected controller: ignored", v);
+    if ((v >> 8 & 0xff) == pad_id() && dev < 2) return (int)dev;
+    static Distinct d = DISTINCT_INIT;
+    distinct(&d, "hid: vibration call (connected: controller %#x, style index %u) for handle %#x, not one of its devices: "
+             "ignored", pad_id(), pad_style_index(), v);
     return -1;
 }
 

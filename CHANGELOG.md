@@ -1,7 +1,21 @@
 # Changelog
 
-## Unreleased — next version (1.0.6), in testing
+## 1.0.6 — 2026-11-17
 
+Heads up: this one is **lightly tested**. I'm buried in university exams right now, so instead of sitting on these
+fixes until I can test every corner, I'm putting them out so anyone who needs them can use them today. If something
+breaks, please open an issue (or, if you figure it out yourself, even better: tell me how!). Thanks for your
+patience, and wish me luck on my exams.
+
+- **Rumble in Tropical Freeze.** It never reached any controller: the game asks for a different kind of vibration
+  handle than Returns HD, and Country-Box dropped all of them. It vibrates now (tried with one real controller). The
+  log also says what happened with the first rumble (`input: first rumble …: the gamepad took it`, or why not)
+  ([#8](https://github.com/zWalt01/Country-Box/issues/8)).
+- **Fewer shader hitches in Tropical Freeze.** The game rewrites a few bytes of each shader at every launch, and those
+  bytes made the same shader look new every time. They're ignored now and the shipped lists were rebuilt: on a clean
+  install, the shaders translated while playing a level dropped from 74–90 to 16 (the 16 left are built by the game at
+  run time and can't be prepared ahead). Tropical Freeze prepares its shaders once more after updating, and it's
+  faster too (about 10.7 s → 6 s on my PC) ([#13](https://github.com/zWalt01/Country-Box/issues/13)).
 - **Installing from RecompLauncher.** It didn't work properly: after picking your copy, setup stopped with "Its setup
   program is missing", so installing and launching from RecompLauncher wasn't reliable. Country-Box's RecompLauncher
   file pointed at the wrong program. That file is fixed now, and RecompLauncher reads it straight from this
@@ -10,7 +24,9 @@
 - **Steam Deck: prepare the game on the Deck itself.** SteamOS has no compiler, so until now a Deck could only play a
   build made on a PC. Country-Box now carries the tools it needs to prepare the game. They are used only while a game
   is being prepared, and nothing is installed on your system. Because of that, **the download grows from about 10 MB
-  to about 200 MB**.
+  to about 200 MB**. This is the least tested part of the release: I haven't had the time to run a full Prepare on a
+  real Deck yet, so if you try it, please tell me how it went in
+  [#15](https://github.com/zWalt01/Country-Box/issues/15).
 - **An update never takes PLAY away.** After updating Country-Box, your games keep playing as before; *Prepare
   update* is optional and brings the newest fixes when you like. Until now the card asked you to prepare first, which
   on a Steam Deck meant you couldn't play.

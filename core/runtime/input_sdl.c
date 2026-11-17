@@ -891,11 +891,19 @@ int input_rumble(uint16_t low, uint16_t high, uint32_t ms) {
     static unsigned seen;
     if (triggers < 0 || seen != cfg_version()) seen = cfg_version(), triggers = input_rumble_triggers_enabled();
     plat_mutex_lock(&lock);
+    int tried = 0;
     if (state == 1 && pad && pad_rumble) {
         ok = SDL_RumbleGamepad(pad, low, high, ms);
+        tried = 1;
         if (triggers) SDL_RumbleGamepadTriggers(pad, high, high, ms);   // unsupported pads return false: ignored
     }
     plat_mutex_unlock(&lock);
+    // Country-Box (public issue #8): the first non-zero rumble and its result, so a log tells whether the pad took it
+    static volatile long said_on, said_fail;
+    if ((low || high) && !plat_atomic_xchg(&said_on, 1))
+        rt_log("input: first rumble %u/%u for %u ms: %s", low, high, ms,
+               !tried ? (pad ? "the gamepad has no rumble" : "no gamepad") : ok ? "the gamepad took it" : SDL_GetError());
+    if (tried && !ok && !plat_atomic_xchg(&said_fail, 1)) rt_log("input: rumble refused by the gamepad (%s)", SDL_GetError());
     return ok;
 }
 

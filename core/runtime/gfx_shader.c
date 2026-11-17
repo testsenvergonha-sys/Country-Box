@@ -1023,12 +1023,55 @@ static size_t pack_answers(uint8_t *o, const GfxShaderAnswers *a) {
 }
 
 static int build_code_hash(int stage, const uint8_t *control, const uint8_t *code, uint64_t code_size,
+                           const uint8_t *c1, uint32_t c1_len, uint8_t hash[32]);
+
+// Country-Box: how many bytes of a control section name a program. Tropical Freeze's SNVN pools lay the control
+// sections 0x840 bytes apart (shader_src_dktf.c): bytes [0x840,0x880) of the copy the game hands to NVN are the NEXT
+// control's head in the files, and at run time the game writes per-boot timestamps and pointers there (measured
+// 2026-11-12: two identical runs share none of those programs, and swapping the tail for the file's maps every
+// one of them back onto a file program). Nothing but this hash reads them — the translator never sees the control
+// section (translate_one sends the code and c1 only; the runtime reads +0x700/+0x704/+0x718/+0x748) — so for that
+// game the identity hashes [0,0x840). Every other game (Returns HD) hashes the whole 0x880 and its identity,
+// caches and shipped lists are unchanged; gfx_shader_identity mixes the length in only when it is not 0x880.
+static uint32_t g_control_hash_len;   // 0 until set
+
+static void control_hash_len_init(void) {
+    uint32_t len = CONTROL_SIZE;
+    const char *romfs = rt_config()->romfs;
+    if (romfs && romfs[0]) {
+        char p[1040];
+        snprintf(p, sizeof p, "%s/MaterialArchive.arc", romfs);
+        if (plat_file_exists(p)) len = 0x840;   // the same detection as shader_src_dktf.detect
+    }
+    __atomic_store_n(&g_control_hash_len, len, __ATOMIC_RELEASE);
+}
+
+uint32_t gfx_shader_control_hash_len(void) {
+    uint32_t len = __atomic_load_n(&g_control_hash_len, __ATOMIC_ACQUIRE);
+    if (!len) {
+        control_hash_len_init();   // benign race: every thread computes the same value
+        len = __atomic_load_n(&g_control_hash_len, __ATOMIC_ACQUIRE);
+    }
+    return len;
+}
+
+// The program hash of a whole control section and its code (the c1 tail read as the runtime does). For the
+// preparation's sink (shader_prep.c) and any offline re-identification.
+int gfx_shader_code_hash(int stage, const uint8_t *control, const uint8_t *code, uint32_t length, uint8_t hash[32]) {
+    uint32_t c1_off;
+    memcpy(&c1_off, control + 0x700, 4);
+    uint32_t c1_len = length >= c1_off ? length - c1_off : 0;
+    return build_code_hash(stage, control, code, length, code + c1_off, c1_len, hash);
+}
+
+static int build_code_hash(int stage, const uint8_t *control, const uint8_t *code, uint64_t code_size,
                            const uint8_t *c1, uint32_t c1_len, uint8_t hash[32]) {
-    size_t total = 4 + CONTROL_SIZE + 8 + (size_t)code_size + 4 + c1_len;
+    size_t ctl = gfx_shader_control_hash_len();
+    size_t total = 4 + ctl + 8 + (size_t)code_size + 4 + c1_len;
     uint8_t *buf = malloc(total), *p = buf;
     if (!buf) return 0;
     put_u32(&p, (uint32_t)stage);
-    memcpy(p, control, CONTROL_SIZE), p += CONTROL_SIZE;
+    memcpy(p, control, ctl), p += ctl;
     memcpy(p, &code_size, 8), p += 8;
     memcpy(p, code, (size_t)code_size), p += code_size;
     put_u32(&p, c1_len);
@@ -2109,11 +2152,14 @@ void gfx_shader_prepare_recorded(int threads, int procs) {
 // answers mixed in, KEY_VERSION, IN_VERSION), for the preparation marker (shader_prep.c). After the device is up.
 void gfx_shader_identity(uint8_t out[32]) {
     paths();
-    uint8_t buf[4 + 32 + 8];
+    uint8_t buf[4 + 32 + 8 + 4];
     memcpy(buf, "TKID", 4), memcpy(buf + 4, xlate_id, 32);
     uint32_t v[2] = {KEY_VERSION, IN_VERSION};
     memcpy(buf + 36, v, 8);
-    rt_sha256(buf, sizeof buf, out);
+    size_t n = 44;
+    uint32_t ctl = gfx_shader_control_hash_len();   // a game hashing less of the control section: its own identity
+    if (ctl != CONTROL_SIZE) memcpy(buf + n, &ctl, 4), n += 4;
+    rt_sha256(buf, n, out);
 }
 
 // ---- prepared variants (shader-prepared.bin next to pipeline-keys.bin)

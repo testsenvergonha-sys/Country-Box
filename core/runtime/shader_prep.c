@@ -270,21 +270,11 @@ static int bytes_put(uint8_t **p, size_t *n, size_t *cap, const void *src, size_
     return 1;
 }
 
-// gfx_shader.c build_code_hash: stage, control, length (u64), code[length], c1 length, c1 = code[c1 offset..length].
+// gfx_shader.c build_code_hash (exported as gfx_shader_code_hash): stage, hashed control bytes, length (u64),
+// code[length], c1 length, c1 = code[c1 offset..length]. Tropical Freeze hashes [0,0x840) of the control
+// (gfx_shader_control_hash_len): the game writes per-boot data past the pools' stride and nothing else reads it.
 static void code_hash(int stage, const uint8_t *control, const uint8_t *code, uint32_t length, uint8_t out[32]) {
-    uint32_t c1_off, st = (uint32_t)stage;
-    memcpy(&c1_off, control + 0x700, 4);
-    uint32_t c1_len = length - c1_off;
-    uint64_t len64 = length;
-    RtSha256 c;
-    rt_sha256_begin(&c);
-    rt_sha256_update(&c, &st, 4);
-    rt_sha256_update(&c, control, CONTROL_SIZE);
-    rt_sha256_update(&c, &len64, 8);
-    rt_sha256_update(&c, code, length);
-    rt_sha256_update(&c, &c1_len, 4);
-    rt_sha256_update(&c, code + c1_off, c1_len);
-    rt_sha256_end(&c, out);
+    gfx_shader_code_hash(stage, control, code, length, out);
 }
 
 static void code_only_hash(int stage, const uint8_t *code, uint32_t length, uint8_t out[32]) {
@@ -349,11 +339,12 @@ static int store(Wanted *W, const uint8_t h[32], int stage, const uint8_t *contr
 }
 
 static void apply_runs(uint8_t *ctl, const uint8_t *r, uint16_t n) {
+    uint32_t hashed = gfx_shader_control_hash_len();
     for (uint16_t i = 0; i < n; i++) {
         uint16_t off;
         memcpy(&off, r, 2);
         uint8_t len = r[2];
-        if ((size_t)off + len <= CONTROL_SIZE) memcpy(ctl + off, r + 3, len);
+        if ((size_t)off + len <= hashed) memcpy(ctl + off, r + 3, len);
         r += 3 + len;
     }
 }
@@ -415,17 +406,20 @@ static uint8_t *patches_read(Wanted *W) {
     return b;
 }
 
-// The patch from a file control to a recorded one: runs of differing bytes (gaps under 4 merged). 0 runs: too far.
+// The patch from a file control to a recorded one: runs of differing bytes (gaps under 4 merged), over the bytes
+// that name a program only — a recorded control differing solely past the hashed length (Tropical Freeze's per-boot
+// tail) needs no patch. 0 runs: too far.
 static size_t make_runs(const uint8_t *from, const uint8_t *to, uint8_t *out, uint16_t *n_runs) {
     size_t o = 0, diff = 0;
+    uint32_t hashed = gfx_shader_control_hash_len();
     *n_runs = 0;
-    for (int i = 0; i < CONTROL_SIZE;) {
+    for (int i = 0; i < (int)hashed;) {
         if (from[i] == to[i]) {
             i++;
             continue;
         }
         int j = i, last = i;
-        while (j < CONTROL_SIZE && j - last < 4 && j - i < 255) {
+        while (j < (int)hashed && j - last < 4 && j - i < 255) {
             if (from[j] != to[j]) last = j;
             j++;
         }
