@@ -8,7 +8,6 @@ built on your machine from your own copy.**
 [Español](docs/README.es.md) · [Install guide](docs/INSTALL.md) · [Install with an AI agent](AGENT-INSTALL.md) ·
 [Known issues](docs/KNOWN-ISSUES.md) · [About](ABOUT.md) · [Changelog](CHANGELOG.md)
 
-<a href="https://recomplauncher.com"><picture><source media="(prefers-color-scheme: dark)" srcset="https://recomplauncher.com/assets/press/launcher/badge-light.svg"><img alt="Get it on RecompLauncher" src="https://recomplauncher.com/assets/press/launcher/badge-dark.svg" height="48"></picture></a>
 
 ![The Country-Box launcher](docs/images/launcher.webp)
 

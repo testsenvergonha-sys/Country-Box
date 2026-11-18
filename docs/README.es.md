@@ -8,7 +8,6 @@ compilados en tu computadora a partir de tu propia copia.**
 [English](../README.md) · [Guía de instalación](INSTALL.md) · [Instalar con un agente de IA](../AGENT-INSTALL.md) ·
 [Problemas conocidos](KNOWN-ISSUES.md) · [Sobre el proyecto](ABOUT.es.md) · [Cambios](../CHANGELOG.md)
 
-<a href="https://recomplauncher.com"><picture><source media="(prefers-color-scheme: dark)" srcset="https://recomplauncher.com/assets/press/launcher/badge-light.svg"><img alt="Get it on RecompLauncher" src="https://recomplauncher.com/assets/press/launcher/badge-dark.svg" height="48"></picture></a>
 
 ![El launcher de Country-Box](images/launcher.webp)
 
