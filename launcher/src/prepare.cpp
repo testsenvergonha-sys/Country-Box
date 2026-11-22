@@ -63,7 +63,11 @@ static bool write_text(const std::string &p, const std::string &text) {
         f << text;
         if (!f) return false;
     }
+#ifdef _WIN32
+    return MoveFileExA(tmp.c_str(), p.c_str(), MOVEFILE_REPLACE_EXISTING) != 0;
+#else
     return !rename(tmp.c_str(), p.c_str());
+#endif
 }
 
 static std::string which(const std::string &name) {

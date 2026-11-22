@@ -121,7 +121,7 @@ def ninja_text(gen, out, mods, gen_opt='-O1'):
         gen_flags_str = " ".join([gen_opt if f == "-O1" else f for f in GEN_FLAGS] + inc)
         rt_flags_str = " ".join(RT_FLAGS + ['-D_WIN32_WINNT=0x0A00'] + rt_inc)
         cxx_flags_str = " ".join(CXX_FLAGS + ['-D_WIN32_WINNT=0x0A00'] + rt_inc)
-        win_libs = ['-Wl,--stack,16777216', '-lpsapi', '-lbcrypt', '-luser32', '-lgdi32', '-ldwmapi', '-lwinmm',
+        win_libs = ['-Wl,--stack,16777216', '-lsynchronization', '-lpsapi', '-lbcrypt', '-luser32', '-lgdi32', '-ldwmapi', '-lwinmm',
                     '-lvulkan-1', '-lSDL3', '-lopus', '-l:libvpx.a', '-l:libz.a',
                     '-l:libc++.a', '-l:libc++abi.a', '-l:libunwind.a', '-l:libwinpthread.a']
         if deps.is_dir() and (deps / 'lib').is_dir():
@@ -183,14 +183,10 @@ def ninja_text(gen, out, mods, gen_opt='-O1'):
             o = out / 'obj' / mod / (f.stem + '.o')
             lines.append(f'build {q(o)}: cc_gen {q(f)}')
             lifted.append(o)
-    if is_win:
-        run = lifted
-        exe = out / 'country-box.exe'
-    else:
-        spin = out / 'obj' / 'lifted' / 'kernel_probe_spin.o'
-        lines.append(f'build {q(spin)}: cc_gen {q(RUNTIME / "kernel_probe_spin.c")}')
-        run = lifted[:1] + [spin] + lifted[1:]   # inside the lifted run, not at either end
-        exe = out / 'country-box'
+    spin = out / 'obj' / 'lifted' / 'kernel_probe_spin.o'
+    lines.append(f'build {q(spin)}: cc_gen {q(RUNTIME / "kernel_probe_spin.c")}')
+    run = lifted[:1] + [spin] + lifted[1:]   # inside the lifted run, not at either end
+    exe = out / ('country-box.exe' if is_win else 'country-box')
     lines += ['', f'build {q(exe)}: link ' + ' '.join(q(o) for o in rt + run), f'default {q(exe)}', '']
     return '\n'.join(lines), exe
 
