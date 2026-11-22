@@ -1,3 +1,4 @@
+#ifndef _WIN32
 // Country-Box: Linux implementation of platform.h (the interface of fe3h-pc-recomp / totk-pc-recomp, MIT; see
 // platform.h and win32.c). Written for Country-Box; techniques noted per section, the Linux layer of PrimeRecomp
 // (gminustwo/primerecomp runtime/platform/linux.c and posix.c, MIT, Copyright (c) 2026 Peiikai) was read as reference.
@@ -801,3 +802,5 @@ long plat_child_read(PlatChild *c, void *buf, size_t cap) {
     do r = read(c->out, buf, cap); while (r < 0 && errno == EINTR);
     return (long)r;
 }
+
+#endif

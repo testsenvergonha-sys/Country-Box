@@ -190,6 +190,9 @@ void Library::refresh(Game &g) {
     g.build_game.clear();
     g.detail.clear();
     std::string exe = g.build_dir + "/country-box";
+#ifdef _WIN32
+    if (access(exe.c_str(), X_OK) != 0) exe += ".exe";
+#endif
     if (access(exe.c_str(), X_OK) == 0) {
         g.exe = exe;
         Json d;

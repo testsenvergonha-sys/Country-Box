@@ -20,6 +20,9 @@
 #include <string.h>
 #include <time.h>
 #include <unistd.h>
+#ifdef _WIN32
+#include <windows.h>
+#endif
 
 #include "cfg.h"
 #include "platform/platform.h"
@@ -530,6 +533,18 @@ static void prewarm_main(void *arg) {
 // Milliseconds since this process started: its start time (field 22 of /proc/self/stat, in clock ticks since boot)
 // against CLOCK_BOOTTIME, the clock those ticks count. 0 when /proc cannot say.
 static uint64_t ms_since_process_start(void) {
+#ifdef _WIN32
+    FILETIME ct, et, kt, ut;
+    if (GetProcessTimes(GetCurrentProcess(), &ct, &et, &kt, &ut)) {
+        FILETIME now;
+        GetSystemTimeAsFileTime(&now);
+        ULARGE_INTEGER t_start = {.LowPart = ct.dwLowDateTime, .HighPart = ct.dwHighDateTime};
+        ULARGE_INTEGER t_now = {.LowPart = now.dwLowDateTime, .HighPart = now.dwHighDateTime};
+        if (t_now.QuadPart > t_start.QuadPart)
+            return (t_now.QuadPart - t_start.QuadPart) / 10000;
+    }
+    return 0;
+#else
     char buf[1024];
     FILE *f = fopen("/proc/self/stat", "r");
     if (!f) return 0;
@@ -552,6 +567,7 @@ static uint64_t ms_since_process_start(void) {
     uint64_t now_ms = (uint64_t)now.tv_sec * 1000 + (uint64_t)now.tv_nsec / 1000000;
     uint64_t start_ms = start_ticks * 1000 / (uint64_t)hz;
     return now_ms > start_ms ? now_ms - start_ms : 0;
+#endif
 }
 
 void rt_boot(void) {

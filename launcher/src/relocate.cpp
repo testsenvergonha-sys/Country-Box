@@ -21,6 +21,12 @@ namespace fs = std::filesystem;
 static const std::set<std::string> kStay = {"python", "app", "library-location", "import"};
 
 std::string default_launcher_home() {
+#ifdef _WIN32
+    const char *appdata = getenv("APPDATA");
+    if (appdata && *appdata) return std::string(appdata) + "/Country-Box";
+    const char *userp = getenv("USERPROFILE");
+    if (userp && *userp) return std::string(userp) + "/AppData/Roaming/Country-Box";
+#endif
     const char *x = getenv("XDG_DATA_HOME"), *h = getenv("HOME");
     if (x && *x) return std::string(x) + "/country-box";
     return std::string(h ? h : ".") + "/.local/share/country-box";
@@ -124,7 +130,7 @@ static bool write_location(const std::string &to, std::string &err) {
         f << to << "\n";
         if (!f) return err = "cannot write " + tmp, false;
     }
-    if (rename(tmp.c_str(), file.c_str())) return err = "cannot write " + file.string() + ": " + strerror(errno), false;
+    if (rename(tmp.c_str(), file.string().c_str())) return err = "cannot write " + file.string() + ": " + strerror(errno), false;
     return true;
 }
 
@@ -132,6 +138,11 @@ static bool write_location(const std::string &to, std::string &err) {
 // them. exFAT/NTFS/FAT drives (often SD cards and USB drives) and noexec mounts don't; checked by trying, not by
 // filesystem name, so it holds on any distribution and mount setup.
 static bool runs_programs(const fs::path &dir, std::string &why) {
+#ifdef _WIN32
+    (void)dir;
+    (void)why;
+    return true;
+#else
     struct statvfs v {};
     if (statvfs(dir.c_str(), &v) == 0 && (v.f_flag & ST_NOEXEC)) return why = "it is mounted without permission to run programs (noexec)", false;
     fs::path t = dir / ".country-box-probe";
@@ -143,6 +154,7 @@ static bool runs_programs(const fs::path &dir, std::string &why) {
     fs::remove(t, ec);
     if (!ok) why = "its format can't keep programs runnable (exFAT, NTFS or FAT)";
     return ok;
+#endif
 }
 
 void move_library(const std::string &from_in, const std::string &picked, LibraryMove &m) {
@@ -188,7 +200,7 @@ void move_library(const std::string &from_in, const std::string &picked, Library
                 if (!kStay.count(d.path().filename().string())) fs::remove_all(d.path(), e);
     };
     struct stat a {}, b {};
-    bool same_drive = stat(from.c_str(), &a) == 0 && stat(to.c_str(), &b) == 0 && a.st_dev == b.st_dev;
+    bool same_drive = stat(from.string().c_str(), &a) == 0 && stat(to.string().c_str(), &b) == 0 && a.st_dev == b.st_dev;
     if (same_drive) {
         std::vector<fs::path> moved;
         for (auto &p : items) {

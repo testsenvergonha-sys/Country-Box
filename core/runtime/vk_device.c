@@ -6,8 +6,10 @@
 // without SDL. The VMA implementation is runtime/vk_vma.cpp (VMA is C++ only).
 #define _GNU_SOURCE
 #include <SDL3/SDL_vulkan.h>
+#ifndef _WIN32
 #include <dlfcn.h>
 #include <execinfo.h>
+#endif
 #include <limits.h>
 #include <stdio.h>
 #include <stdlib.h>
@@ -53,9 +55,14 @@ static VKAPI_ATTR VkBool32 VKAPI_CALL addr_cb(VkDebugUtilsMessageSeverityFlagBit
     if (!b || (addr_watch == ~0ull ? plat_atomic_inc(&n_all) > 40 : addr_watch < b->baseAddress || addr_watch - b->baseAddress >= b->size))
         return VK_FALSE;
     void *ret[25];
+#ifdef _WIN32
+    int nr = CaptureStackBackTrace(1, 24, ret, NULL);
+    uintptr_t self = (uintptr_t)GetModuleHandle(NULL);
+#else
     int nr = backtrace(ret, 25);   // frame 0 is this callback, skipped as CaptureStackBackTrace(1, ...) did
     Dl_info di;   // the executable's load address: return addresses as offsets into it, whatever the linker
     uintptr_t self = dladdr((void *)addr_cb, &di) ? (uintptr_t)di.dli_fbase : 0;
+#endif
     char st[24 * 20] = "", who[96];
     size_t o = 0;
     for (int i = 1; i < nr && o < sizeof st - 20; i++)

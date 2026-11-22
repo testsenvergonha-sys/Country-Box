@@ -131,7 +131,12 @@ static void remove_dir(const char *dir) {
         while ((de = readdir(d))) {
             char f[PATH_MAX * 2];
             snprintf(f, sizeof f, "%s/%s", dir, de->d_name);
+#ifdef _WIN32
+            struct stat st;
+            if (stat(f, &st) == 0 && !S_ISDIR(st.st_mode)) unlink(f);
+#else
             if (de->d_type != DT_DIR) unlink(f);   // the cache holds loose files only (its in/ subdirectory stays; rmdir fails)
+#endif
         }
         closedir(d);
     }
@@ -155,8 +160,15 @@ int probe_shader(void) {
     CHECK(count == WANT, "only %d census shaders usable", count);
 
     char dir[PATH_MAX];
+#ifdef _WIN32
+    const char *tmp = getenv("TEMP");
+    if (!tmp) tmp = ".";
+    snprintf(dir, sizeof dir, "%s/mp4-shader-probe-%lu", tmp, (unsigned long)getpid());
+    CHECK(_putenv_s("MP4_SHADER_CACHE", dir) == 0, "cannot set MP4_SHADER_CACHE");
+#else
     snprintf(dir, sizeof dir, "%s/mp4-shader-probe-%lu", getenv("TMPDIR") ? getenv("TMPDIR") : "/tmp", (unsigned long)getpid());
     CHECK(setenv("MP4_SHADER_CACHE", dir, 1) == 0, "cannot set MP4_SHADER_CACHE");
+#endif
 
     // pass 1: translate through the service
     const GfxShader *first[WANT];

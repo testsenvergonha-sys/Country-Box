@@ -43,7 +43,11 @@
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
+#ifndef _WIN32
 #include <sys/resource.h>
+#else
+#include <windows.h>
+#endif
 #include <sys/stat.h>
 #include <unistd.h>
 
@@ -919,7 +923,11 @@ static int use_scan_file(const char *name, void *ctx) {
 
 static void use_preload(void *arg) {
     (void)arg;
+#ifdef _WIN32
+    SetThreadPriority(GetCurrentThread(), THREAD_PRIORITY_BELOW_NORMAL);
+#else
     setpriority(PRIO_PROCESS, 0, 10);   // Linux nice is per thread: the old THREAD_PRIORITY_BELOW_NORMAL
+#endif
     uint64_t t0 = plat_now_ns();
     int n = 0, bad = 0;
     for (uint32_t i = 0; i < pack_n; i++) {   // the packed masks; the loose files below add the masks found since

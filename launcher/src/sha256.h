@@ -21,4 +21,12 @@ const char *sha256_backend(void);
 
 #ifdef __cplusplus
 }
+#include <filesystem>
+#include <string>
+inline int sha256_file(const std::filesystem::path &p, char hex[65], volatile int64_t *progress, volatile int *cancel) {
+    return sha256_file(p.string().c_str(), hex, progress, cancel);
+}
+inline int sha256_file(const wchar_t *wpath, char hex[65], volatile int64_t *progress, volatile int *cancel) {
+    return sha256_file(std::filesystem::path(wpath).string().c_str(), hex, progress, cancel);
+}
 #endif

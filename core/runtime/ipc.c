@@ -10,11 +10,13 @@
 #include <errno.h>
 #include <fcntl.h>
 #include <signal.h>
+#ifndef _WIN32
 #include <spawn.h>
+#include <sys/wait.h>
+#endif
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
-#include <sys/wait.h>
 #include <unistd.h>
 
 #include "audren.h"
@@ -796,6 +798,40 @@ static void child_main(Cpu *c) {
 }
 
 // Re-run this executable with the same arguments and PROBE_CHILD_ENV set; it must stop with the named fatal.
+#ifdef _WIN32
+static void probe_unknown_service(void) {
+    SECURITY_ATTRIBUTES sa = {sizeof sa, NULL, TRUE};
+    HANDLE rd, wr;
+    if (!CreatePipe(&rd, &wr, &sa, 0)) rt_fatal("probe-ipc: CreatePipe failed (error %lu)", GetLastError());
+    SetHandleInformation(rd, HANDLE_FLAG_INHERIT, 0);
+    STARTUPINFOW si = {.cb = sizeof si, .dwFlags = STARTF_USESTDHANDLES, .hStdInput = GetStdHandle(STD_INPUT_HANDLE),
+                       .hStdOutput = wr, .hStdError = wr};
+    PROCESS_INFORMATION pi;
+    wchar_t *cmdline = _wcsdup(GetCommandLineW());
+    SetEnvironmentVariableA(PROBE_CHILD_ENV, "1");
+    BOOL ok = CreateProcessW(NULL, cmdline, NULL, NULL, TRUE, 0, NULL, NULL, &si, &pi);
+    SetEnvironmentVariableA(PROBE_CHILD_ENV, NULL);
+    free(cmdline);
+    CloseHandle(wr);
+    if (!ok) rt_fatal("probe-ipc: CreateProcessW failed (error %lu)", GetLastError());
+    static char out[65536];
+    DWORD n, len = 0;
+    while (len < sizeof out - 1 && ReadFile(rd, out + len, (DWORD)(sizeof out - 1 - len), &n, NULL) && n) len += n;
+    out[len] = 0;
+    CloseHandle(rd);
+    WaitForSingleObject(pi.hProcess, 30000);
+    DWORD code = 0;
+    GetExitCodeProcess(pi.hProcess, &code);
+    CloseHandle(pi.hProcess);
+    CloseHandle(pi.hThread);
+    const char *want = "FATAL: sm: service \"" PROBE_UNKNOWN_SERVICE "\" is not implemented";
+    const char *line = strstr(out, want);
+    printf("child GetServiceHandle(%s): exit code %lu, %s\n", PROBE_UNKNOWN_SERVICE, (unsigned long)code,
+           line ? "named fatal seen" : "named fatal MISSING");
+    if (line) printf("  child: %.*s\n", (int)strcspn(line, "\r\n"), line);
+    CHECK(code == 70 && line, "unknown service fatal (child output: %s)", out);
+}
+#else
 static void probe_unknown_service(void) {
     static char cmdline[8192];
     char *argv[256];
@@ -846,6 +882,7 @@ static void probe_unknown_service(void) {
     if (line) printf("  child: %.*s\n", (int)strcspn(line, "\r\n"), line);
     CHECK(code == 70 && line, "unknown service fatal (child output: %s)", out);
 }
+#endif
 
 // ---- the game's own nn::audio client: main's PLT stubs -> lifted sdk -> SVCs -> this file
 #define SYM_INIT_PARAM "_ZN2nn5audio32InitializeAudioRendererParameterEPNS0_22AudioRendererParameterE"

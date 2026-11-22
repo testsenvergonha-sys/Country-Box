@@ -75,7 +75,7 @@ struct Curl {
 static Curl &curl() {
     static Curl c = [] {
         Curl c;
-        for (const char *name : {"libcurl.so.4", "libcurl.so"}) {
+        for (const char *name : {"libcurl.so.4", "libcurl.so", "libcurl.dll", "libcurl-x64.dll"}) {
             c.so = dlopen(name, RTLD_NOW | RTLD_LOCAL);
             if (c.so) break;
         }

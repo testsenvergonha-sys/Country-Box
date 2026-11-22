@@ -12,7 +12,9 @@
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
+#ifndef _WIN32
 #include <sys/prctl.h>
+#endif
 #include <time.h>
 #include <SDL3/SDL.h>
 
@@ -406,7 +408,9 @@ static void wait_until(uint64_t due) {
 
 static void render_thread(void *p) {
     AudioRenderer *r = p;
+#ifndef _WIN32
     prctl(PR_SET_TIMERSLACK, 1ul, 0ul, 0ul, 0ul);
+#endif
     const uint64_t frame_ns = (uint64_t)r->param.sample_count * 1000000000ull / (uint64_t)r->param.sample_rate;
     const double frame = (double)r->param.sample_count / r->param.sample_rate;
     uint64_t next = kern_now_ns();

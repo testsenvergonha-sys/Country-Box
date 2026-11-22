@@ -23,6 +23,12 @@
 #include <cstdlib>
 #include <ctime>
 #include <filesystem>
+#ifdef _WIN32
+#ifndef WIN32_LEAN_AND_MEAN
+#define WIN32_LEAN_AND_MEAN
+#endif
+#include <windows.h>
+#endif
 #include <fstream>
 #include <sstream>
 
@@ -225,6 +231,117 @@ std::string PrepareJob::line() {
 
 // Runs one child, tees everything it prints into the log, parses progress lines. False when it failed or was
 // cancelled (outcome_.kind says which; "cancelled" only when we asked for it).
+#ifdef _WIN32
+bool PrepareJob::child(const std::vector<std::string> &argv, const std::string &cwd, const char *parse_what) {
+    if (argv.empty()) return false;
+    SECURITY_ATTRIBUTES sa = {sizeof(sa), NULL, TRUE};
+    HANDLE hRead = NULL, hWrite = NULL;
+    if (!CreatePipe(&hRead, &hWrite, &sa, 0)) return false;
+    SetHandleInformation(hRead, HANDLE_FLAG_INHERIT, 0);
+
+    STARTUPINFOA si = {sizeof(si)};
+    si.dwFlags = STARTF_USESTDHANDLES;
+    si.hStdOutput = hWrite;
+    si.hStdError = hWrite;
+    si.hStdInput = GetStdHandle(STD_INPUT_HANDLE);
+
+    PROCESS_INFORMATION pi = {0};
+    std::string cmd;
+    for (size_t i = 0; i < argv.size(); i++) {
+        if (i > 0) cmd += ' ';
+        const std::string &a = argv[i];
+        if (a.find(' ') != std::string::npos || a.empty()) {
+            cmd += '"' + a + '"';
+        } else {
+            cmd += a;
+        }
+    }
+
+    const char *work_dir = cwd.empty() ? NULL : cwd.c_str();
+    BOOL ok = CreateProcessA(NULL, cmd.data(), NULL, NULL, TRUE, CREATE_NEW_PROCESS_GROUP, NULL, work_dir, &si, &pi);
+    CloseHandle(hWrite);
+    if (!ok) {
+        CloseHandle(hRead);
+        return false;
+    }
+    CloseHandle(pi.hThread);
+
+    std::ofstream log(log_, std::ios::app);
+    bool cancelled = false;
+    char buf[8192];
+    std::string pend;
+    auto handle = [&](const std::string &l) {
+        std::string line = trim(l);
+        if (line.empty()) return;
+        log << line << '\n' << std::flush;
+        set_line_text(line);
+        int d = -1, t = -1;
+        if (!strcmp(parse_what, "lift") && sscanf(line.c_str(), "emitted %d/%d chunks", &d, &t) != 2) d = -1;
+        else if (!strcmp(parse_what, "compile") && sscanf(line.c_str(), "[%d/%d]", &d, &t) != 2) d = -1;
+        else if (!strcmp(parse_what, "shaders")) {
+            d = t = -1;
+            double elapsed = -1;
+            if (sscanf(line.c_str(), "prepare-shaders: %*s %d / %d  elapsed %lf", &d, &t, &elapsed) >= 3) {
+                stage_done.store(d), stage_total.store(t);
+                if (const char *about = strstr(line.c_str(), "about ")) {
+                    double left = -1;
+                    if (sscanf(about, "about %lf s left", &left) == 1 && left >= 0) eta_s.store(left);
+                } else if (elapsed >= 0 && d > 0 && t > 0) {
+                    eta_s.store(elapsed * (t - d) / d);
+                }
+                return;
+            }
+            d = t = -1;
+        }
+        if (d >= 0 && t > 0) {
+            stage_done.store(d), stage_total.store(t);
+            double in_stage = now_s() - stage_elapsed_base_;
+            if (d > 0 && in_stage > 1) eta_s.store(in_stage * (t - d) / d);
+        }
+    };
+
+    for (;;) {
+        if (__atomic_load_n(&cancel_flag_, __ATOMIC_RELAXED) && !cancelled) {
+            cancelled = true;
+            TerminateProcess(pi.hProcess, 1);
+        }
+        DWORD avail = 0;
+        if (PeekNamedPipe(hRead, NULL, 0, NULL, &avail, NULL) && avail > 0) {
+            DWORD bytesRead = 0;
+            DWORD toRead = sizeof(buf) < avail ? (DWORD)sizeof(buf) : avail;
+            if (ReadFile(hRead, buf, toRead, &bytesRead, NULL) && bytesRead > 0) {
+                pend.append(buf, (size_t)bytesRead);
+                size_t a = 0;
+                for (size_t nl; (nl = pend.find('\n', a)) != std::string::npos; a = nl + 1) handle(pend.substr(a, nl - a));
+                pend.erase(0, a);
+                continue;
+            }
+        }
+        DWORD wait = WaitForSingleObject(pi.hProcess, 20);
+        if (wait == WAIT_OBJECT_0) break;
+    }
+
+    DWORD bytesRead = 0;
+    while (ReadFile(hRead, buf, sizeof(buf), &bytesRead, NULL) && bytesRead > 0) {
+        pend.append(buf, (size_t)bytesRead);
+        size_t a = 0;
+        for (size_t nl; (nl = pend.find('\n', a)) != std::string::npos; a = nl + 1) handle(pend.substr(a, nl - a));
+        pend.erase(0, a);
+    }
+    CloseHandle(hRead);
+    handle(pend);
+
+    DWORD exit_code = 0;
+    GetExitCodeProcess(pi.hProcess, &exit_code);
+    CloseHandle(pi.hProcess);
+
+    if (cancelled) {
+        outcome_.kind = "cancelled";
+        return false;
+    }
+    return exit_code == 0;
+}
+#else
 bool PrepareJob::child(const std::vector<std::string> &argv, const std::string &cwd, const char *parse_what) {
     if (argv.empty()) return false;
     int fds[2];
@@ -327,6 +444,7 @@ bool PrepareJob::child(const std::vector<std::string> &argv, const std::string &
     }
     return WIFEXITED(st) && WEXITSTATUS(st) == 0;
 }
+#endif
 
 // The launcher's own Python environment: $XDG_DATA_HOME/country-box/python (default ~/.local/share/...), if made.
 static std::string own_python() {

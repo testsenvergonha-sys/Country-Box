@@ -9,6 +9,26 @@
 #include <string.h>
 #include <unistd.h>
 
+#ifdef _WIN32
+#ifndef WIN32_LEAN_AND_MEAN
+#define WIN32_LEAN_AND_MEAN
+#endif
+#include <windows.h>
+#define pthread_once_t INIT_ONCE
+#define PTHREAD_ONCE_INIT INIT_ONCE_STATIC_INIT
+static inline int win32_pthread_once(pthread_once_t *once_control, void (*init_routine)(void)) {
+    BOOL pending = FALSE;
+    if (InitOnceBeginInitialize(once_control, 0, &pending, NULL)) {
+        if (pending) {
+            init_routine();
+            InitOnceComplete(once_control, 0, NULL);
+        }
+    }
+    return 0;
+}
+#define pthread_once(o, f) win32_pthread_once(o, f)
+#endif
+
 // ---- libcrypto through dlopen (no build-time dependency)
 
 typedef void *(*EvpNewFn)(void);

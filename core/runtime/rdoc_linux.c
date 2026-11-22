@@ -1,3 +1,4 @@
+#ifndef _WIN32
 // From fe3h-pc-recomp runtime/rdoc_win.c @ 47ef99126793dbd13e4a475feb910a13ef6639b8 (MIT, Copyright (c) 2026 Jeff Aigner), copied with fe3h renamed to mp4 only.
 // From totk-pc-recomp runtime/rdoc_win.c @ c944f9f94520874f2a669add30dd08d29ee9f7b5 (MIT, Copyright (c) 2026 Valiantsin Dzerakh), copied with totk renamed to fe3h only. Country-Box: renamed from rdoc_win.c; librenderdoc.so through dlopen (Linux).
 // RenderDoc in-app capture (debug tool). MP4_RDOC=<frame>[,<frame>...] captures those presented frames; MP4_RDOC_DIR is the
@@ -97,3 +98,5 @@ void rdoc_after_present(uint64_t frame) {
     for (int i = 0; i < n_targets; i++)
         if (targets[i] == frame + 1) { api->StartFrameCapture(NULL, NULL); capturing = 1; rt_log("rdoc: capture of frame %llu started", (unsigned long long)(frame + 1)); }
 }
+
+#endif

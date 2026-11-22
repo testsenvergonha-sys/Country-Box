@@ -249,9 +249,10 @@ def ninja_file(gen, out, mods, pool_depth, skip=(), prebuilt=False, runtime_lib=
     out/obj and are link inputs without a compile edge. runtime_lib: a prebuilt library replaces the runtime objects
     except INSTALL_SIDE. make_lib: build only that library, from the runtime objects except INSTALL_SIDE."""
     inc = f'-I {cmd_path(RUNTIME)} -I {cmd_path(gen)}'
+    compat = f'-I {cmd_path(RUNTIME / "platform" / "compat")}'
     vma = f'{cmd_path(DEPS / "include")} -I {cmd_path(DEPS / "include" / "vma")}' if DEPS else cmd_path(VMA_INCLUDE)
     imgui = cmd_path(RUNTIME / 'third_party' / 'imgui')
-    rt_inc = f'{inc} -I {cmd_path(out)} -I {vma} -I {imgui}'   # romfs_config.h, vk_mem_alloc.h (+ deps headers), imgui.h
+    rt_inc = f'{inc} {compat} -I {cmd_path(out)} -I {vma} -I {imgui}'   # romfs_config.h, vk_mem_alloc.h (+ deps headers), imgui.h
     # llvm-mingw links against its libc++; MSYS2 UCRT64 clang (installer/layout.py's dev fallback, with the MSYS2 tree
     # as --deps) against libstdc++: by the toolchain's libraries, not by whether --deps was given.
     llvm_libs = DEPS and TOOLCHAIN_BIN and (TOOLCHAIN_BIN.parent / 'x86_64-w64-mingw32' / 'lib' / 'libc++.a').is_file()
@@ -636,7 +637,9 @@ def main():
              'romfs': (args.romfs or extracted / 'romfs').resolve(),
              'profile': (args.profile or ROOT / 'build' / 'profile').resolve()}
     expected = args.expected
-    if expected:
+    if args.make_runtime_lib:
+        hashes = {}
+    elif expected:
         hashes = json.loads(Path(expected).read_text())['exefs_sha256']
     else:
         expected = extracted / 'extraction-manifest.json'
@@ -659,41 +662,48 @@ def main():
     for tool in (CLANG, NINJA):
         if not tool.is_file():
             sys.exit(f'{tool} not found: install MSYS2 UCRT64 clang, lld and ninja (docs/building.md)')
-    if not (gen / 'layout.json').is_file():
-        sys.exit(f'{gen / "layout.json"} not found: run the generator first')
-
-    layout = read_layout(gen)
-    names = [n for n, _, _ in layout]
-    wanted = args.modules.split(',') if args.modules else names
-    unknown = [m for m in wanted if m not in names]
-    if unknown:
-        sys.exit(f'unknown modules {unknown}; the layout has {names}')
-    linked = [m for m in names if m in wanted]
-    mods = {m: chunk_files(gen, m) for m in linked}
+    if args.make_runtime_lib:
+        layout, names, linked, mods = [], [], [], {}
+    else:
+        if not (gen / 'layout.json').is_file():
+            sys.exit(f'{gen / "layout.json"} not found: run the generator first')
+        layout = read_layout(gen)
+        names = [n for n, _, _ in layout]
+        wanted = args.modules.split(',') if args.modules else names
+        unknown = [m for m in wanted if m not in names]
+        if unknown:
+            sys.exit(f'unknown modules {unknown}; the layout has {names}')
+        linked = [m for m in names if m in wanted]
+        mods = {m: chunk_files(gen, m) for m in linked}
 
     cpus = os.cpu_count() or 1
     budget = min(MEM_BUDGET, int(total_ram() * 0.8))
     jobs = args.jobs or max(1, min(cpus, budget // JOB_MEM))
-    missing = [n for n in names if n not in hashes]
-    if missing:
-        sys.exit(f'{expected}: no exefs_sha256 for {missing}')
-    write_if_changed(out / 'modules.c', module_glue(layout, linked, hashes, paths, args.version))
-    if (paths['romfs'] / 'index.json').is_file():
-        count, size, dt = romfs_index.write(paths['romfs'], out)
-        print(f'romfs index: {count} files, {mib(size)}, {dt:.1f} s')
-    else:
-        romfs_index.write_placeholder(out)
-        print(f'build_game: warning: no {paths["romfs"] / "index.json"}; mp4.exe will have no RomFS', file=sys.stderr)
+    if not args.make_runtime_lib:
+        missing = [n for n in names if n not in hashes]
+        if missing:
+            sys.exit(f'{expected}: no exefs_sha256 for {missing}')
+        write_if_changed(out / 'modules.c', module_glue(layout, linked, hashes, paths, args.version))
+        if (paths['romfs'] / 'index.json').is_file():
+            count, size, dt = romfs_index.write(paths['romfs'], out)
+            print(f'romfs index: {count} files, {mib(size)}, {dt:.1f} s')
+        else:
+            romfs_index.write_placeholder(out)
+            print(f'build_game: warning: no {paths["romfs"] / "index.json"}; mp4.exe will have no RomFS', file=sys.stderr)
     global RUNTIME
     RUNTIME = (args.runtime or RUNTIME).resolve()
     stale = stale_shaders(RUNTIME)
     if stale:
         sys.exit(f'{stale[0]}: its SPIR-V header no longer matches; run python tools/build_shaders.py')
     skip = {s for s in args.skip_runtime.split(',') if s}
+    skip.update({'linux.c', 'prof_linux.c', 'rdoc_linux.c', 'kernel_probe_spin.c'})
     main_out = (ROOT / 'build' / args.version).resolve()
     pairs = None
     if args.make_runtime_lib:
         mods, linked, why = {}, [], ''
+        out.mkdir(parents=True, exist_ok=True)
+        if not (out / 'layout.h').is_file() and not (gen / 'layout.h').is_file():
+            (out / 'layout.h').write_text('#pragma once\n#define MOD_MAIN_BASE 0x7000000000ull\n#define MOD_MAIN_SIZE 0x10000000ull\n#define MOD_COUNT 1\n#define MOD_LIST(X) X(main, MAIN)\n')
     elif args.full_build:
         why = '--full-build'
     elif args.toolchain:

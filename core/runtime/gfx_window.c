@@ -31,7 +31,9 @@
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
+#ifndef _WIN32
 #include <sys/prctl.h>
+#endif
 #include <time.h>
 #include <unistd.h>
 #include <SDL3/SDL.h>
@@ -163,13 +165,20 @@ static int64_t g_vs_start_ns;
 static int g_vs_started;
 
 static void sleep_until_ns(uint64_t due) {
+#ifdef _WIN32
+    uint64_t now = plat_now_ns();
+    if (due > now) plat_sleep_ns(due - now);
+#else
     struct timespec ts = {(time_t)(due / 1000000000ull), (long)(due % 1000000000ull)};
     while (clock_nanosleep(CLOCK_MONOTONIC, TIMER_ABSTIME, &ts, NULL) == EINTR) {}
+#endif
 }
 
 static void vsync_main(void *arg) {
     (void)arg;
+#ifndef _WIN32
     prctl(PR_SET_TIMERSLACK, 1ul, 0ul, 0ul, 0ul);
+#endif
     uint64_t n = 0, hz = gfx_vsync_hz();
     int64_t tick_base = 0;                               // 60 Hz ticks counted before the last rate change
     for (;;) {

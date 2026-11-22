@@ -24,13 +24,15 @@
 // handler on an alternate stack that names the lifted function, the guest registers and the guest frame-pointer chain).
 #define _GNU_SOURCE
 #include <limits.h>
-#include <link.h>
-#include <signal.h>
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
-#include <sys/prctl.h>
+#ifndef _WIN32
+#include <link.h>
 #include <ucontext.h>
+#endif
+#include <sys/prctl.h>
+#include <signal.h>
 #include <unistd.h>
 
 #include "cfg.h"
@@ -83,6 +85,10 @@ static int readable(uint64_t a, uint64_t n) {
     return n && n <= sizeof probe && plat_mem_read(a, probe, (size_t)n);
 }
 
+#ifdef _WIN32
+void rt_crash_thread_init(void) {}
+static void crash_install(void) {}
+#else
 // The executable's own mapped image (its PT_LOAD segments), found once at start-up: a fault inside it is ours to report,
 // one in a driver or system library is left to the default action (a core dump for the system's crash collector).
 static uintptr_t image_lo, image_hi;
@@ -177,6 +183,7 @@ static void crash_install(void) {
     static const int sigs[] = {SIGSEGV, SIGBUS, SIGILL, SIGFPE};
     for (unsigned i = 0; i < sizeof sigs / sizeof *sigs; i++) sigaction(sigs[i], &sa, &old_action[sigs[i]]);
 }
+#endif
 
 // ---- self-test: layout, dispatch table, host-function registry, without game files
 static int failures;
@@ -185,6 +192,20 @@ static int failures;
 static double now_s(void) { return (double)plat_now_ns() / 1e9; }
 
 // The mapping that holds addr in /proc/self/maps: its start and permissions ("---p"); 0 when none does.
+#ifdef _WIN32
+static int mapping_of(uint64_t addr, uint64_t *start, char perms[5]) {
+    MEMORY_BASIC_INFORMATION mbi;
+    if (!VirtualQuery((void *)(uintptr_t)addr, &mbi, sizeof mbi)) return 0;
+    if (mbi.State != MEM_COMMIT) return 0;
+    *start = (uint64_t)(uintptr_t)mbi.BaseAddress;
+    perms[0] = (mbi.Protect & (PAGE_READONLY | PAGE_READWRITE | PAGE_EXECUTE_READ | PAGE_EXECUTE_READWRITE)) ? 'r' : '-';
+    perms[1] = (mbi.Protect & (PAGE_READWRITE | PAGE_EXECUTE_READWRITE)) ? 'w' : '-';
+    perms[2] = (mbi.Protect & (PAGE_EXECUTE | PAGE_EXECUTE_READ | PAGE_EXECUTE_READWRITE)) ? 'x' : '-';
+    perms[3] = 'p';
+    perms[4] = 0;
+    return 1;
+}
+#else
 static int mapping_of(uint64_t addr, uint64_t *start, char perms[5]) {
     FILE *f = fopen("/proc/self/maps", "r");
     char line[512];
@@ -198,6 +219,7 @@ static int mapping_of(uint64_t addr, uint64_t *start, char perms[5]) {
     if (f) fclose(f);
     return found;
 }
+#endif
 
 static volatile int host_probe_hits;
 static void host_probe(Cpu *c) { host_probe_hits++; c->x[0] = 42; }

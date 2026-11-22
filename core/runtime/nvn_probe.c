@@ -17,10 +17,15 @@
 #ifndef _GNU_SOURCE
 #define _GNU_SOURCE   // environ
 #endif
+#ifdef _WIN32
+#include <windows.h>
+#endif
 #include <errno.h>
 #include <fcntl.h>
+#ifndef _WIN32
 #include <spawn.h>
 #include <sys/wait.h>
+#endif
 #include <unistd.h>
 #include <stdint.h>
 #include <stdio.h>
@@ -863,6 +868,34 @@ static void probe_proc_table(void) {
 // ---- named fatal stubs, each in a child process
 // Runs this executable again with the same command line (as /proc/self/cmdline spells it) and CHILD_ENV=<mode>;
 // its stdout and stderr go into out. Returns the exit code (128 + n for death by signal n).
+#ifdef _WIN32
+static int run_child(const char *mode, char *out, size_t cap) {
+    SECURITY_ATTRIBUTES sa = {sizeof sa, NULL, TRUE};
+    HANDLE rd, wr;
+    if (!CreatePipe(&rd, &wr, &sa, 0)) rt_fatal("probe-nvn: CreatePipe (error %lu)", GetLastError());
+    SetHandleInformation(rd, HANDLE_FLAG_INHERIT, 0);
+    STARTUPINFOW si = {.cb = sizeof si, .dwFlags = STARTF_USESTDHANDLES, .hStdInput = GetStdHandle(STD_INPUT_HANDLE),
+                       .hStdOutput = wr, .hStdError = wr};
+    PROCESS_INFORMATION pi;
+    wchar_t *cmdline = _wcsdup(GetCommandLineW());
+    SetEnvironmentVariableA(CHILD_ENV, mode);
+    BOOL ok = CreateProcessW(NULL, cmdline, NULL, NULL, TRUE, 0, NULL, NULL, &si, &pi);
+    SetEnvironmentVariableA(CHILD_ENV, NULL);
+    free(cmdline);
+    CloseHandle(wr);
+    if (!ok) rt_fatal("probe-nvn: CreateProcessW (error %lu)", GetLastError());
+    DWORD n = 0, len = 0;
+    while (len + 1 < cap && ReadFile(rd, out + len, (DWORD)(cap - 1 - len), &n, NULL) && n) len += n;
+    out[len] = 0;
+    CloseHandle(rd);
+    WaitForSingleObject(pi.hProcess, 30000);
+    DWORD code = 0;
+    GetExitCodeProcess(pi.hProcess, &code);
+    CloseHandle(pi.hProcess);
+    CloseHandle(pi.hThread);
+    return (int)code;
+}
+#else
 static int run_child(const char *mode, char *out, size_t cap) {
     int fds[2];
     if (pipe2(fds, O_CLOEXEC)) rt_fatal("probe-nvn: pipe (error %d)", errno);
@@ -901,6 +934,7 @@ static int run_child(const char *mode, char *out, size_t cap) {
     while (waitpid(pid, &st, 0) < 0 && errno == EINTR) {}
     return WIFEXITED(st) ? WEXITSTATUS(st) : 128 + WTERMSIG(st);
 }
+#endif
 
 static int run_as_child(const char *name) {
     for (int i = 0; i < NPROCS; i++)
