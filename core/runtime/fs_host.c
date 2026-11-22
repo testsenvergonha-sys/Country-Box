@@ -42,16 +42,14 @@
 #define fsync(fd) _commit(fd)
 #define O_CLOEXEC O_NOINHERIT
 #define O_DIRECTORY 0
-#ifdef _WIN32
 #define host_mkdir(p) _mkdir(p)
-#else
-#define host_mkdir(p) mkdir((p), 0777)
-#endif
 #define posix_fadvise(fd, off, len, adv) ((void)0)
 #define POSIX_FADV_SEQUENTIAL 0
 #define S_ISLNK(m) 0
 #define link(src, dst) (CreateHardLinkA(dst, src, NULL) ? 0 : -1)
 #define gmtime_r(tim, res) (gmtime_s(res, tim) == 0 ? (res) : NULL)
+#else
+#define host_mkdir(p) mkdir((p), 0777)
 #endif
 
 #include "fs.h"
