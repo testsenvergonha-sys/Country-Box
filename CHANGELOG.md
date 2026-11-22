@@ -1,5 +1,14 @@
 # Changelog
 
+## 1.0.8 — 2026-11-22
+
+- **Preparing a game works again when the AppImage is in a folder with spaces** (for example
+  `~/Downloads/Tropical Freeze/`). Since 1.0.7 the build tools live next to the AppImage, and the bundled build kit
+  (used on the Steam Deck and on PCs without a compiler) split that folder's name in two, so the compiler stopped with
+  "no such file or directory". Found and fixed by [@llethas](https://github.com/llethas)
+  ([#20](https://github.com/zWalt01/Country-Box/issues/20), [#21](https://github.com/zWalt01/Country-Box/pull/21)) —
+  thank you!
+
 ## 1.0.7 — 2026-11-21
 
 - **Windows support is on its way, thanks to [@testsenvergonha-sys](https://github.com/testsenvergonha-sys)**
