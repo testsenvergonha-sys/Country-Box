@@ -203,6 +203,8 @@ void Ui::frame(float scale, float t) {
     bool back = ImGui::IsKeyPressed(ImGuiKey_Escape, false) || ImGui::IsKeyPressed(ImGuiKey_GamepadFaceRight, false);
     if (back) {
         if (flow_ == Flow::Moving) {}   // a move is not cancelled halfway; Done closes it
+        else if (flow_ == Flow::Choose) migration_choice("later");
+        else if (flow_ == Flow::Browse && migrate_pick_) migrate_pick_ = browse_library_ = false, flow_ = Flow::Choose, request_focus();
         else if (flow_ == Flow::Checking && job_) job_->cancel();
         else if (flow_ == Flow::Prepare && prep_ && !prep_->done()) prep_->cancel();
         else if (flow_ == Flow::Updating && update_) update_->cancel();
@@ -235,6 +237,7 @@ void Ui::frame(float scale, float t) {
         else if (flow_ == Flow::UpdateAsk) draw_update_ask(fmn, fmx);
         else if (flow_ == Flow::Updating) draw_updating(fmn, fmx);
         else if (flow_ == Flow::Moving) draw_moving(fmn, fmx);
+        else if (flow_ == Flow::Choose) draw_choose(fmn, fmx);
         else draw_update_result(fmn, fmx);
     }
     draw_footer(V(0, W.y - footer_h), W);
@@ -257,6 +260,7 @@ void Ui::finish_flow() {
     if (import_thread_.joinable() && import_done_.load()) import_thread_.join();
     browse_import_ = false;
     browse_library_ = false;
+    migrate_pick_ = false;
     if (update_) update_->cancel(), update_.reset();
     flow_ = Flow::None;
     lib_.refresh();
@@ -526,7 +530,7 @@ void Ui::draw_browse(ImVec2 mn, ImVec2 mx) {
     panel(mn, mx, s_);
     float pad = 28 * s_, x = mn.x + pad, y = mn.y + 22 * s_;
     if (browse_library_) {
-        shadow_text(fonts.title, V(x, y), art::kBanana, "Move your library", 2 * s_);
+        shadow_text(fonts.title, V(x, y), art::kBanana, migrate_pick_ ? "Where should Country-Box live?" : "Move your library", 2 * s_);
         y += fonts.title->FontSize + 2 * s_;
         text_at(fonts.body, V(x, y), art::kCream,
                 "Choose where your games, builds and saves go. A folder with files gets a Country-Box folder inside.", mx.x - x - pad);
@@ -673,8 +677,11 @@ void Ui::draw_browse(ImVec2 mn, ImVec2 mx) {
             start_import_dir(flow_game_, dir_);
     } else if (button("##use", "Use this folder", V(mx.x - pad - 300 * s_, by), V(300 * s_, bh), art::kBanana, flow_ == Flow::Browse, fonts.big))
         start_check(flow_game_, dir_);
-    if (button("##cancel", "Cancel", V(mx.x - pad - 300 * s_ - 24 * s_ - 200 * s_, by), V(200 * s_, bh), IM_COL32(90, 60, 34, 255), true, fonts.big))
-        finish_flow();
+    if (button("##cancel", migrate_pick_ ? "Back" : "Cancel", V(mx.x - pad - 300 * s_ - 24 * s_ - 200 * s_, by), V(200 * s_, bh),
+               IM_COL32(90, 60, 34, 255), true, fonts.big)) {
+        if (migrate_pick_) migrate_pick_ = browse_library_ = false, flow_ = Flow::Choose, request_focus();   // back to the question
+        else finish_flow();
+    }
     (void)dl;
 }
 
@@ -778,6 +785,7 @@ void Ui::start_library_browse() {
 }
 
 void Ui::start_library_move(const std::string &picked) {
+    if (migrate_pick_) return start_migration(migration_, picked);
     if (move_thread_.joinable()) {
         if (!move_->finished.load()) return;
         move_thread_.join();
@@ -790,13 +798,90 @@ void Ui::start_library_move(const std::string &picked) {
     move_thread_ = std::thread([m, from, picked] { move_library(from, picked, *m); });
 }
 
+void Ui::ask_migration(const Migration &plan) {
+    migration_ = plan;
+    flow_ = Flow::Choose;
+    request_focus();
+}
+
+void Ui::migration_choice(const std::string &what) {
+    if (!migration_.needed) return;
+    if (what == "here") return start_migration(migration_, "");
+    if (what == "folder") {
+        migrate_pick_ = true;
+        browse_library_ = true;
+        browse_import_ = false;
+        open_browse("", "");
+        return;
+    }
+    if (what == "keep") {
+        std::string err;
+        if (keep_library_here(migration_, err))
+            toast("Your library stays in " + migration_.from + ". You can move it any time: About, Move library.", art::kGood);
+        else toast("Your library stays where it is, but that choice could not be saved: " + err, art::kBad);
+    }
+    // keep or later: the old place stays this run's base (main set it)
+    migration_ = Migration();
+    finish_flow();
+}
+
+void Ui::start_migration(const Migration &plan, const std::string &picked) {
+    if (move_thread_.joinable()) return;
+    migration_ = plan;
+    migrate_pick_ = browse_library_ = false;
+    move_ = std::make_unique<LibraryMove>();
+    flow_ = Flow::Moving;
+    request_focus();
+    LibraryMove *m = move_.get();
+    Migration p = plan;
+    move_thread_ = std::thread([m, p, picked] { migrate_library(p, picked, *m); });
+}
+
+void Ui::draw_choose(ImVec2 mn, ImVec2 mx) {
+    panel(mn, mx, s_);
+    float cx = (mn.x + mx.x) * 0.5f, pad = 40 * s_, y = mn.y + 34 * s_, wrap = mx.x - mn.x - 2 * pad;
+    text_center(fonts.title, cx, y, art::kBanana, "New: Country-Box in one folder");
+    y += fonts.title->FontSize + 16 * s_;
+    std::string intro = "This version can keep everything (your games, builds, saves and settings) together in one folder you choose, "
+                        "so it is tidier and easy to back up or remove. Right now it is in " + migration_.from + ".";
+    text_center(fonts.body, cx, y, art::kCream, intro, wrap);
+    y += text_size(fonts.body, intro, wrap).y + 18 * s_;
+    std::string safe = "Your saves are safe: before anything moves, a copy of them goes to your Desktop, and they move with your games too.";
+    text_center(fonts.small, cx, y, art::kGood, safe, wrap);
+    y += text_size(fonts.small, safe, wrap).y + 14 * s_;
+    std::string keep = "If you keep it where it is, nothing changes and this is not asked again.";
+    text_center(fonts.small, cx, y, art::kMuted, keep, wrap);
+    float bh = 66 * s_, gap = 20 * s_, bw = std::min(340 * s_, (wrap - 2 * gap) / 3), by = mx.y - 40 * s_ - bh - 70 * s_;
+    float bx = cx - (3 * bw + 2 * gap) * 0.5f;
+    if (button("##chhere", "Next to Country-Box", V(bx + 2 * (bw + gap), by), V(bw, bh), art::kBanana, true, fonts.body, true))
+        migration_choice("here");
+    if (button("##chfolder", "Choose a folder…", V(bx + bw + gap, by), V(bw, bh), kButton, true, fonts.body)) migration_choice("folder");
+    if (button("##chkeep", "Keep it where it is", V(bx, by), V(bw, bh), kButton, true, fonts.body)) migration_choice("keep");
+    text_center(fonts.small, bx + 2 * (bw + gap) + bw * 0.5f, by + bh + 10 * s_, art::kMuted, "(recommended)");
+    float lh = 52 * s_;
+    if (button("##chlater", "Ask me later", V(cx - 130 * s_, mx.y - 30 * s_ - lh), V(260 * s_, lh), IM_COL32(70, 54, 30, 255), true, fonts.small))
+        migration_choice("later");
+}
+
+void Ui::notice(const std::string &text) {
+    notice_ = text;
+    toast(text, art::kBad);
+}
+
 void Ui::draw_moving(ImVec2 mn, ImVec2 mx) {
     panel(mn, mx, s_);
     ImDrawList *dl = ImGui::GetWindowDrawList();
     float cx = (mn.x + mx.x) * 0.5f, y = mn.y + 40 * s_, wrap = mx.x - mn.x - 120 * s_;
     LibraryMove &m = *move_;
     bool done = m.finished.load();
-    text_center(fonts.title, cx, y, art::kBanana, done ? (m.ok ? "Your library moved" : "The library stayed where it was") : "Moving your library");
+    bool mig = migration_.needed;
+    text_center(fonts.title, cx, y, art::kBanana,
+                done ? (m.ok ? "Your library moved" : "The library stayed where it was")
+                     : "Moving your library");
+    if (mig && !done) {   // why it moves at all: the player's answer on the first start of 1.0.7
+        y += fonts.title->FontSize + 12 * s_;
+        text_center(fonts.small, cx, y, art::kMuted, "From " + migration_.from + (m.to.empty() ? std::string() : " to " + m.to) + ".", wrap);
+    }
     y += fonts.title->FontSize + 30 * s_;
     if (!done) {
         int64_t d = m.done.load(), t = m.total.load();
@@ -812,13 +897,23 @@ void Ui::draw_moving(ImVec2 mn, ImVec2 mx) {
             y += 70 * s_;
         }
         y += fonts.body->FontSize + 16 * s_;
-        text_center(fonts.small, cx, y, art::kMuted, "Keep the launcher open. If anything goes wrong, your library stays where it was.", wrap);
+        text_center(fonts.small, cx, y, art::kMuted,
+                    "Keep the launcher open. Your saves are copied to your Desktop first; if anything goes wrong, your library stays "
+                    "where it was.", wrap);
         return;
     }
     if (m.ok) {
         text_center(fonts.body, cx, y, art::kCream, m.to, wrap);
         y += fonts.body->FontSize + 12 * s_;
-        text_center(fonts.small, cx, y, art::kMuted, "Builds, saves and logs are there now, and the launcher will keep using that folder.", wrap);
+        text_center(fonts.small, cx, y, art::kMuted,
+                    mig ? "Builds, saves, settings and logs are there now, and Country-Box will keep using that folder."
+                        : "Builds, saves and logs are there now, and the launcher will keep using that folder.", wrap);
+        if (!m.backup.empty()) {
+            y += fonts.small->FontSize * 2 + 22 * s_;
+            text_center(fonts.body, cx, y, art::kGood, "Don't worry about your saves: they are in your games, and a copy is on your Desktop:", wrap);
+            y += fonts.body->FontSize * 2 + 14 * s_;
+            text_center(fonts.small, cx, y, art::kCream, m.backup, wrap);
+        }
     } else {
         text_center(fonts.big, cx, y, art::kCream, m.headline, wrap);
         y += fonts.big->FontSize + 12 * s_;
@@ -827,7 +922,12 @@ void Ui::draw_moving(ImVec2 mn, ImVec2 mx) {
     float bh = 62 * s_;
     if (button("##mvdone", "Done", V(cx - 140 * s_, mx.y - 34 * s_ - bh), V(280 * s_, bh), art::kBanana, true, fonts.big)) {
         if (move_thread_.joinable()) move_thread_.join();
-        if (m.ok) lib_.relocate(m.to);
+        if (m.ok && mig) {   // the base is the data folder now (migrate_library); the library is where it records
+            contain_temp_files(default_launcher_home());
+            lib_.relocate(launcher_home(""));
+        } else if (m.ok) lib_.relocate(m.to);
+        else if (mig) notice_ = "Your library stays in " + migration_.from + ": " + m.headline;
+        migration_ = Migration();
         move_.reset();
         finish_flow();
         set_tab(Tab::About);
@@ -1275,16 +1375,23 @@ void Ui::decline_update() {
 }
 
 void Ui::restart_launcher() {
-    // From an AppImage the update replaced that file: start it again; otherwise the installed app/current.
-    const char *ai = getenv("APPIMAGE");
-    std::string exe = ai && *ai ? std::string(ai) : lib_.home() + "/app/current/country-box-launcher";
+    // From an AppImage the update replaced that file: start it again; from the tarball its folder's AppRun (the
+    // folder was swapped); otherwise the installed app/current.
+    const char *ai = getenv("APPIMAGE"), *pe = getenv("CB_PORTABLE_EXE");
+    std::error_code e0;
+    std::string exe = ai && *ai ? std::string(ai)
+                      : pe && *pe && fs::is_directory(pe, e0) ? std::string(pe) + "/AppRun"
+                                                              : lib_.home() + "/app/current/country-box-launcher";
     if (access(exe.c_str(), X_OK) != 0) {
         toast("The new launcher is not at " + exe, art::kBad);
         return;
     }
     std::error_code ec;
     fs::create_directories(lib_.home() + "/logs", ec);
-    pid_t pid = proc_spawn({exe, "--home", lib_.home()}, fs::path(exe).parent_path().string(), lib_.home() + "/logs/launcher.log");
+    // --home only when this run had it: otherwise the new launcher finds the same folders by itself (and may move them)
+    std::vector<std::string> argv = {exe};
+    if (launcher_home_fixed()) argv.push_back("--home"), argv.push_back(lib_.home());
+    pid_t pid = proc_spawn(argv, fs::path(exe).parent_path().string(), lib_.home() + "/logs/launcher.log");
     if (pid > 0) quit_ = true;
     else toast("The new launcher could not be started (" + exe + ").", art::kBad);
 }
@@ -1682,9 +1789,10 @@ void Ui::draw_about(ImVec2 mn, ImVec2 mx) {
     // credits past the panel's bottom edge
     if (y > pmn.y + 40 * s_ + bh * 1.15f) x = pmn.x + 40 * s_, wrap = pmx.x - 30 * s_ - x;
     {   // the library's folder (relocate.h)
-        std::string why = launcher_home_fixed() ? "  (set by --home or CB_LAUNCHER_HOME for this run)"
+        std::string why = launcher_home_fixed() ? "  (set by --data-dir, --home or CB_LAUNCHER_HOME for this run)"
                           : lib_.any_running()  ? "  (close the game to move it)" : "";
         para(fonts.small, art::kMuted, "Library (builds, saves, logs): " + lib_.home() + why);
+        if (!notice_.empty()) para(fonts.small, art::kBad, notice_);
     }
     para(fonts.small, art::kMuted,
          "Built on Metroid Prime 4 Recomp (Jeff Aigner), fe3h-pc-recomp, totk-pc-recomp and LAS Recomp (MIT); SDL 3 (zlib); "

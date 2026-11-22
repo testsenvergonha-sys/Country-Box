@@ -48,6 +48,9 @@ Other regions usually ship the same files on Switch; the launcher checks your co
 3. Press **PREPARE** — about 9 minutes for *Returns HD* and 2½ for *Tropical Freeze* on an 8-core PC, once.
 4. Press **PLAY**.
 
+To start a game straight from Steam or a shortcut, skipping the launcher, use the launch option `--returns` or
+`--freeze` ([how](docs/INSTALL.md#start-a-game-directly-steam-shortcuts)).
+
 Updates install themselves and rebuild only what changed. Using an AI agent? Give it
 [AGENT-INSTALL.md](AGENT-INSTALL.md). Full details: [docs/INSTALL.md](docs/INSTALL.md).
 

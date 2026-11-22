@@ -126,8 +126,10 @@ def make_home(tmp, case, current_version='0.1.0'):
     return home
 
 
-def run(exe, home, url, *args):
+def run(exe, home, url, *args, extra=None):
     env = dict(os.environ, CB_LAUNCHER_HOME=str(home), CB_UPDATE_API=url)
+    env.pop('APPIMAGE', None)
+    env.update(extra or {})
     p = subprocess.run([exe, *args], env=env, capture_output=True, text=True, timeout=120)
     try:
         return p.returncode, json.loads(p.stdout)
@@ -220,6 +222,59 @@ def main():
         check(code == 0 and r and r['ok'] and r['asset']['sha256_from'] == 'SHA256SUMS', 'SHA256SUMS is accepted too')
         code, r = run(exe, home, url, '--update')
         check(code == 0 and r and r['ok'] and os.readlink(home / 'app' / 'current') == '9.9.9', 'and installs')
+
+        # ---- G: run from the extracted tarball: the release's .tar.gz is unpacked next to it and swapped in
+        import io
+        import tarfile
+
+        def tarball(files):
+            b = io.BytesIO()
+            with tarfile.open(fileobj=b, mode='w:gz') as t:
+                for n, data in files.items():
+                    i = tarfile.TarInfo(n)
+                    i.size, i.mode = len(data), 0o755
+                    t.addfile(i, io.BytesIO(data))
+            return b.getvalue()
+
+        def installed(where):
+            d = where / 'Country-Box'
+            (d / 'usr' / 'bin').mkdir(parents=True)
+            (d / 'AppRun').write_bytes(b'#!/bin/sh\n# old\n')
+            (d / 'usr' / 'bin' / 'country-box-launcher').write_bytes(b'old launcher')
+            (where / 'Country-Box-data').mkdir()
+            (where / 'Country-Box-data' / 'keep.txt').write_text('data')
+            return d
+
+        new_tree = {'Country-Box/AppRun': b'#!/bin/sh\n# new\n', 'Country-Box/usr/bin/country-box-launcher': b'new launcher'}
+        tgz = tarball(new_tree)
+        where = tmp / 'tar install'
+        folder = installed(where)
+        home = make_home(tmp, 'g')
+        tname = 'Country-Box-linux-x86_64.tar.gz'
+        FakeReleases.release = release('v9.9.9', tname, tgz, digest='sha256:' + hashlib.sha256(tgz).hexdigest())
+        FakeReleases.release['assets'].insert(0, dict(FakeReleases.release['assets'][0], name='Country-Box-9.9.9-linux-x86_64.AppImage'))
+        set_urls(FakeReleases.release, port)
+        FakeReleases.asset, FakeReleases.serve = tgz, 'whole'
+        tar_env = {'CB_PORTABLE_EXE': str(folder)}
+        code, r = run(exe, home, url, '--check-update', extra=tar_env)
+        check(code == 0 and r and r['asset']['name'] == tname, 'from the tarball, the update is the release\'s tarball')
+        code, r = run(exe, home, url, '--update', extra=tar_env)
+        check(code == 0 and r and r['ok'] and (folder / 'usr/bin/country-box-launcher').read_bytes() == b'new launcher'
+              and (folder / 'AppRun').read_bytes() == new_tree['Country-Box/AppRun'], 'the tarball update swaps the folder in')
+        check((where / 'Country-Box.old' / 'usr/bin/country-box-launcher').read_bytes() == b'old launcher'
+              and not (where / 'Country-Box.new').exists(), 'the previous folder stays as Country-Box.old, no leftovers')
+        check((where / 'Country-Box-data' / 'keep.txt').read_text() == 'data', 'the data folder next to it is untouched')
+        # a tarball that is not a Country-Box tree is refused and nothing changes
+        bad = tarball({'other/readme': b'x'})
+        where = tmp / 'tar bad'
+        folder = installed(where)
+        home = make_home(tmp, 'h')
+        FakeReleases.release = release('v9.9.9', tname, bad, digest='sha256:' + hashlib.sha256(bad).hexdigest())
+        set_urls(FakeReleases.release, port)
+        FakeReleases.asset = bad
+        code, r = run(exe, home, url, '--update', extra={'CB_PORTABLE_EXE': str(folder)})
+        check(code == 1 and r and not r['ok'] and (folder / 'usr/bin/country-box-launcher').read_bytes() == b'old launcher'
+              and not (where / 'Country-Box.new').exists(), 'a tarball without Country-Box in it is refused, nothing changes')
     finally:
         shutil.rmtree(tmp)
         srv.shutdown()

@@ -35,6 +35,7 @@
 #include "json.h"
 #include "library.h"
 #include "proc.h"
+#include "relocate.h"
 #include "sha256.h"
 
 namespace fs = std::filesystem;
@@ -446,13 +447,14 @@ bool PrepareJob::child(const std::vector<std::string> &argv, const std::string &
 }
 #endif
 
-// The launcher's own Python environment: $XDG_DATA_HOME/country-box/python (default ~/.local/share/...), if made.
+// The launcher's own Python environment: <base>/python (relocate.h: the data folder next to the AppImage, or
+// ~/.local/share/country-box for a bare binary), if made.
+static std::string own_python_env() { return default_launcher_home() + "/python"; }
+
 static std::string own_python() {
-    std::string base = getenv("XDG_DATA_HOME") && *getenv("XDG_DATA_HOME") ? getenv("XDG_DATA_HOME")
-                       : getenv("HOME") ? std::string(getenv("HOME")) + "/.local/share" : std::string();
-    std::string p = base + "/country-box/python/bin/python";
+    std::string p = own_python_env() + "/bin/python";
     std::error_code ec;
-    return !base.empty() && fs::exists(p, ec) ? p : std::string();
+    return fs::exists(p, ec) ? p : std::string();
 }
 
 // A plain-words list of everything missing, or "" when the machine can build. CB_TEST_TOOLS_OK skips the check
@@ -498,10 +500,8 @@ static std::string missing_tools_hint(const std::string &missing) {
         return "SteamOS has no compiler. Prepare the game on a Linux PC with the same Country-Box version, copy its "
                "build folder here, and use \u201cImport a build\u201d on the game's card.";
     bool py_only = missing.rfind("python3 with", 0) == 0;
-    if (py_only) {   // the real place (XDG_DATA_HOME, a portable AppImage's home), quoted for any folder name
-        std::string base = getenv("XDG_DATA_HOME") && *getenv("XDG_DATA_HOME") ? getenv("XDG_DATA_HOME")
-                           : std::string(getenv("HOME") ? getenv("HOME") : "") + "/.local/share";
-        std::string q = "'", env = base + "/country-box/python";
+    if (py_only) {   // the real place (the data folder, or ~/.local/share/country-box), quoted for any folder name
+        std::string q = "'", env = own_python_env();
         for (char c : env) q += c == '\'' ? std::string("'\\''") : std::string(1, c);
         q += "'";
         std::string py = q.substr(0, q.size() - 1) + "/bin/python'";
@@ -591,14 +591,12 @@ bool PrepareJob::preflight(std::string *python) {
     // the pinned modules into it, once (needs the network). The player never sees this as an error.
     if (missing == "python3 with capstone, unicorn and numpy" && !getenv("CB_PYTHON") && own_python().empty()) {
         std::string sys_py = which("python3");
-        std::string base = getenv("XDG_DATA_HOME") && *getenv("XDG_DATA_HOME") ? getenv("XDG_DATA_HOME")
-                           : std::string(getenv("HOME") ? getenv("HOME") : "") + "/.local/share";
-        std::string env = base + "/country-box/python";
+        std::string env = own_python_env();
         set_line_text("setting up Python for the build (first time only; downloads about 40 MB)");
         bool made = !sys_py.empty() && child({sys_py, "-m", "venv", env}, payload_, "python") &&
                     // python -m pip, not bin/pip: that script starts through the shell with the venv's path in
                     // double quotes, so a folder with $ or ` in its name broke it
-                    child({env + "/bin/python", "-m", "pip", "install", "--disable-pip-version-check", "-r", payload_ + "/requirements.txt"},
+                    child({env + "/bin/python", "-m", "pip", "install", "--disable-pip-version-check", "--no-cache-dir", "-r", payload_ + "/requirements.txt"},
                           payload_, "python");
         if (!made && outcome_.kind == "cancelled") return false;
         if (!made) {
@@ -866,15 +864,13 @@ void PrepareJob::run() {
     stage.store(Finished);
 }
 
-// The kit is reached through one fixed link (~/.cache/country-box/toolkit) whatever /tmp/.mount_XXXX the AppImage got
-// this time: compile commands and ninja's dependency log keep that path, so the next Prepare rebuilds only what changed
-// instead of everything. The link exists only while a game is being prepared; nothing is copied or installed.
+// The kit is reached through one fixed link (<base>/toolkit, inside the data folder) whatever /tmp/.mount_XXXX the
+// AppImage got this time: compile commands and ninja's dependency log keep that path, so the next Prepare rebuilds only
+// what changed instead of everything. The link exists only while a game is being prepared; nothing is copied or installed.
 bool PrepareJob::use_toolkit() {
-    const char *xdg = getenv("XDG_CACHE_HOME");
-    std::string base = xdg && *xdg ? xdg : std::string(getenv("HOME") ? getenv("HOME") : "") + "/.cache";
     std::error_code ec;
-    fs::create_directories(base + "/country-box", ec);
-    toolkit_link_ = base + "/country-box/toolkit";
+    fs::create_directories(default_launcher_home(), ec);
+    toolkit_link_ = default_launcher_home() + "/toolkit";
     std::string tmp = toolkit_link_ + ".new";
     fs::remove(tmp, ec);
     fs::create_directory_symlink(toolkit_, tmp, ec);

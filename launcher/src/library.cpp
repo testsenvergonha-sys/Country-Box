@@ -288,7 +288,20 @@ bool Library::play(Game &g, std::string *err) {
                         g.build_dir + "/profile"},
                        g.build_dir, g.log);
     if (g.pid < 0) return fail(err, "The game could not be started.");
+    std::ofstream(home_ + "/last-played", std::ios::trunc) << g.id << "\n";   // --skip starts it next time
     return true;
+}
+
+Game *Library::last_played() {
+    std::ifstream f(home_ + "/last-played");
+    std::string id;
+    std::getline(f, id);
+    return id.empty() ? nullptr : find(trim(id));
+}
+
+bool Library::playable(const Game &g) {
+    return !g.exe.empty() &&
+           (g.state == GameState::Ready || g.state == GameState::NeedsShaders || g.state == GameState::UpdateAvailable);
 }
 
 bool Library::poll_running() {
@@ -346,7 +359,12 @@ bool Library::settings_set(const Game &g, const std::vector<std::string> &pairs,
 }
 
 std::string Library::status_json() {
-    std::string o = "{\"version\": " + json_quote(launcher_version()) + ", \"home\": " + json_quote(home_) + ", \"games\": [";
+    // where things are (relocate.h): the data folder (portable; "" for a bare binary), the base this run uses, and why
+    // the base is not the data folder when it is not
+    std::string o = "{\"version\": " + json_quote(launcher_version()) + ", \"home\": " + json_quote(home_) +
+                    ", \"data_folder\": " + json_quote(portable_data_dir()) + ", \"base\": " + json_quote(default_launcher_home()) +
+                    ", \"portable\": " + (!portable_data_dir().empty() && default_launcher_home() == portable_data_dir() ? "true" : "false") +
+                    ", \"note\": " + json_quote(base_note()) + ", \"games\": [";
     bool first = true;
     for (auto &g : games_) {
         o += std::string(first ? "\n" : ",\n") + "  {\"id\": " + json_quote(g.id) +

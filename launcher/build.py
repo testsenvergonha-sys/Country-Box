@@ -88,14 +88,18 @@ def main():
         [IMGUI / n for n in ('imgui.cpp', 'imgui_draw.cpp', 'imgui_tables.cpp', 'imgui_widgets.cpp')]
     q = lambda p: str(p).replace('\\', '/').replace('$', '$$').replace(' ', '$ ').replace(':', '$:')
     
+    # Country-Box: no backslash inside an f-string expression: Python < 3.12 (the release container, Ubuntu 22.04's
+    # 3.10) refuses it; Windows paths are written with forward slashes for Ninja
+    fwd = lambda x: str(x).replace('\\', '/')
+    inc_fwd, libs_fwd = [fwd(x) for x in inc], [fwd(x) for x in libs]
     clang_q = str(clang).replace('\\', '/')
     clangxx_q = str(clangxx).replace('\\', '/')
 
     lines = [
         '# Written by launcher/build.py; do not edit.',
-        f'cflags = {" ".join(["-std=gnu17"] + COMMON + WARN + [str(x).replace("\\\\", "/") for x in inc] + defs)}',
-        f'cxxflags = {" ".join(["-std=c++20"] + COMMON + WARN + [str(x).replace("\\\\", "/") for x in inc] + defs)}',
-        f'libs = {" ".join([str(x).replace("\\\\", "/") for x in libs])}',
+        f'cflags = {" ".join(["-std=gnu17"] + COMMON + WARN + inc_fwd + defs)}',
+        f'cxxflags = {" ".join(["-std=c++20"] + COMMON + WARN + inc_fwd + defs)}',
+        f'libs = {" ".join(libs_fwd)}',
         'rule cc', f'  command = {clang_q} $cflags -MD -MF $out.d -c $in -o $out', '  deps = gcc', '  depfile = $out.d',
         '  description = CC $in',
         'rule cxx', f'  command = {clangxx_q} $cxxflags -MD -MF $out.d -c $in -o $out', '  deps = gcc', '  depfile = $out.d',

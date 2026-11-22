@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 # Country-Box: test of starting a game straight from the command line (country-box-launcher --play GAME, --returns,
-# --freeze: Steam launch options and shortcuts). The game is a stand-in script that writes the arguments it got and
+# --freeze, --skip [GAME]: Steam launch options and shortcuts; --fullscreen / --windowed / --resolution for that run). The game is a stand-in script that writes the arguments it got and
 # exits with a known code, so nothing real starts and no window opens. Uses a scratch library; the real copy is only
 # read (--add checks it).
 #
@@ -37,7 +37,8 @@ def fake_build(d, dump='{}'):
     d.mkdir(parents=True)
     exe = d / 'country-box'
     exe.write_text('#!/bin/sh\n[ "$1" = --settings-dump ] && { echo \'' + dump + '\'; exit 0; }\n'
-                   'printf "%s\\n" "$@" > "$(dirname "$0")/args.txt"\nexit 7\n')
+                   'printf "%s\\n" "$@" > "$(dirname "$0")/args.txt"\n'
+                   'env | grep ^MP4_ | sort > "$(dirname "$0")/env.txt"\nexit 7\n')
     exe.chmod(0o755)
     return d
 
@@ -84,6 +85,39 @@ def main():
         code, _, err = run(exe, home, '--setup', f'dkcrhd={rcopy}', path=str(nobin))
         check(code == 0 and 'Playing the build already here' in err,
               '--setup without compilers keeps the build it has instead of failing')
+        # --skip: straight into the game (the one played last, or the one that is ready), no launcher window
+        (old / 'args.txt').unlink(missing_ok=True)
+        code, _, _ = run(exe, home, '--skip')
+        check(code == 7 and (old / 'args.txt').exists(), '--skip starts the game played last')
+        check((home / 'last-played').read_text().strip() == 'dkcrhd', 'PLAY records the game played last')
+        (home / 'last-played').unlink()
+        (old / 'args.txt').unlink(missing_ok=True)
+        code, _, _ = run(exe, home, '--skip')
+        check(code == 7 and (old / 'args.txt').exists(), '--skip without a record starts the one game that is ready')
+        (old / 'args.txt').unlink(missing_ok=True)
+        code, _, _ = run(exe, home, '--skip', 'returns')
+        check(code == 7 and (old / 'args.txt').exists(), '--skip GAME starts that game')
+        (old / 'args.txt').unlink(missing_ok=True)
+        code, out, err = run(exe, home, '--skip', 'freeze', '--auto', 'frames:2;quit')
+        check(code == 0 and 'opening Country-Box' in err and not (old / 'args.txt').exists(),
+              '--skip with a game that is not ready opens the launcher instead')
+        # the game's window for this run only: the environment wins over mp4.ini (cfg.c)
+        code, _, _ = run(exe, home, '--skip', '--fullscreen', '--resolution', '1280x800')
+        env = (old / 'env.txt').read_text().split()
+        check(code == 7 and 'MP4_FULLSCREEN=1' in env and 'MP4_WINDOW_SIZE=1280x800' in env,
+              '--fullscreen --resolution reach the game for that run')
+        code, _, _ = run(exe, home, '--returns', '--windowed')
+        env = (old / 'env.txt').read_text().split()
+        check(code == 7 and 'MP4_FULLSCREEN=0' in env and not any(e.startswith('MP4_WINDOW_SIZE') for e in env),
+              '--windowed reaches the game; no size unless asked')
+        code, _, _ = run(exe, home, '--returns')
+        check(code == 7 and not any(e.startswith('MP4_FULLSCREEN') for e in (old / 'env.txt').read_text().split()),
+              'without the flags the game keeps its own setting')
+        code, _, err = run(exe, home, '--resolution', 'big')
+        check(code == 2 and 'WIDTHxHEIGHT' in err, 'a bad --resolution is refused, saying the form')
+        code, out, _ = run(exe, home, '--help')
+        check(code == 0 and all(f in out for f in ('--skip', '--data-dir', '--fullscreen', '--windowed', '--resolution',
+                                                    '--add', '--set-build', '--no-update')), '--help lists every option')
     finally:
         shutil.rmtree(tmp)
     print('play test:', 'passed' if not fails else f'{fails} FAILED')

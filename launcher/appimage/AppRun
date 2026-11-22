@@ -4,4 +4,13 @@ HERE="$(dirname "$(readlink -f "$0")")"
 # starts (Python, clang, the game, which was built against the system's SDL)
 export CB_APPRUN=1 CB_APPRUN_LD_LIBRARY_PATH="${LD_LIBRARY_PATH-}"
 export LD_LIBRARY_PATH="$HERE/usr/lib${LD_LIBRARY_PATH:+:$LD_LIBRARY_PATH}"
+# portable (relocate.h): the launcher keeps everything in Country-Box-data next to what the player runs — the .AppImage
+# file when this is the mounted AppImage, else this folder (the release tarball, or an --appimage-extract). $APPIMAGE
+# only counts when it is this image: one inherited from another AppImage (a launcher that is an AppImage itself) is not.
+if [ -n "${APPIMAGE-}" ] && [ -n "${APPDIR-}" ] && [ "$(readlink -f "$APPDIR")" = "$HERE" ]; then
+    export CB_PORTABLE_EXE="$APPIMAGE"
+else
+    unset APPIMAGE
+    export CB_PORTABLE_EXE="$HERE"
+fi
 exec "$HERE/usr/bin/country-box-launcher" "$@"

@@ -1,7 +1,7 @@
 // Country-Box launcher: the player's library. Where each game's checked copy and its build (the recompiled game
-// binary, country-box) live, and the state each card shows. Kept in <home>/library.ini, where home is --home or
-// CB_LAUNCHER_HOME, else the folder the player moved it to (relocate.h), else $XDG_DATA_HOME/country-box, else
-// ~/.local/share/country-box.
+// binary, country-box) live, and the state each card shows. Kept in <home>/library.ini, where home is --home /
+// --data-dir or CB_LAUNCHER_HOME, else the folder the player moved it to, else the base (relocate.h): the data folder
+// Country-Box-data next to the AppImage, or ~/.local/share/country-box for a bare binary.
 //
 // Designed for the later milestones: a build is normally <home>/games/<game>/ (what setup will write when it
 // recompiles or copies a prebuilt build); "build = <dir>" in the library points at another one. Saves and settings
@@ -66,6 +66,9 @@ public:
     // Polls running games; true when one ended since the last call.
     bool poll_running();
     bool any_running() const;
+    // --skip: the game PLAY started last (<home>/last-played), nullptr when none; a game PLAY can start right now.
+    Game *last_played();
+    static bool playable(const Game &g);
 
     // The game's settings (--settings-dump); false with err.
     bool settings_dump(const Game &g, Json &out, std::string *err) const;

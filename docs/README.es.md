@@ -50,6 +50,9 @@ En Switch, las otras regiones suelen traer los mismos archivos; el launcher revi
 3. Pulsa **PREPARE**: unos 9 minutos para *Returns HD* y 2½ para *Tropical Freeze* en una PC de 8 núcleos, una sola vez.
 4. Pulsa **PLAY**.
 
+Para abrir un juego directo desde Steam o un acceso directo, sin pasar por el launcher, usa la opción de inicio
+`--returns` o `--freeze` ([cómo](INSTALL.md#start-a-game-directly-steam-shortcuts), en inglés).
+
 Las actualizaciones se instalan solas y sólo recompilan lo que cambió. ¿Usas un agente de IA? Dale
 [AGENT-INSTALL.md](../AGENT-INSTALL.md). Todos los detalles: [INSTALL.md](INSTALL.md).
 

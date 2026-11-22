@@ -80,6 +80,10 @@ A Steam Deck has no compiler. Build on a PC instead, copy the game's build folde
 ./country-box-launcher --play GAME
 ```
 
+`GAME` is `dkcrhd` or `dkctf`, or the player-friendly `returns` / `freeze`; `--returns` and `--freeze` are short for
+`--play returns` / `--play freeze`. For a Steam entry, add the AppImage as a non-Steam game with the launch option
+`--returns` or `--freeze`.
+
 Updates: `./country-box-launcher --check-update` and `--update`. An update never touches saves or settings; after
 it, run `--prepare GAME` again.
 

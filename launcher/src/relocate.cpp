@@ -1,9 +1,11 @@
 // Country-Box launcher: moving the library (relocate.h).
 #include "relocate.h"
 
+#include <cctype>
 #include <cerrno>
 #include <cstdlib>
 #include <cstring>
+#include <ctime>
 #include <filesystem>
 #include <fstream>
 #include <set>
@@ -14,13 +16,18 @@
 #include <vector>
 
 #include "library.h"
+#include "manifest.h"
 
 namespace fs = std::filesystem;
 
-// Kept in place by a move: tools (python/, app/), the record of where the library is, and import staging.
-static const std::set<std::string> kStay = {"python", "app", "library-location", "import"};
+// Kept in place by a player's move: tools (python/, app/), the record of where the library is, import staging,
+// temporary files and caches. A migration moves the tools too; what is only temporary is dropped instead.
+static const std::set<std::string> kStay = {"python", "app", "library-location", "library-choice", "import", "tmp", "cache"};
+static const std::set<std::string> kStayMigration = {"library-location", "library-choice", "import", "tmp", "cache"};
 
-std::string default_launcher_home() {
+static const char *kDataFolder = "Country-Box-data";
+
+std::string legacy_launcher_home() {
 #ifdef _WIN32
     const char *appdata = getenv("APPDATA");
     if (appdata && *appdata) return std::string(appdata) + "/Country-Box";
@@ -32,7 +39,74 @@ std::string default_launcher_home() {
     return std::string(h ? h : ".") + "/.local/share/country-box";
 }
 
+std::string portable_data_dir() {
+    // AppRun: the .AppImage file ($APPIMAGE), or the extracted folder (tarball, --appimage-extract) it runs from
+    const char *e = getenv("CB_PORTABLE_EXE");
+    if (!e || !*e) return "";
+    std::string anchor = e;
+    while (anchor.size() > 1 && anchor.back() == '/') anchor.pop_back();
+    fs::path parent = fs::path(anchor).parent_path();
+    if (parent.empty()) parent = ".";
+    std::error_code ec;
+    fs::path abs = fs::absolute(parent, ec);
+    return ((ec ? parent : abs).lexically_normal() / kDataFolder).string();
+}
+
+static bool runs_programs(const fs::path &dir, std::string &why);
+
+static std::string g_base, g_base_note;
+static bool g_base_decided = false;
+
+// The data folder when it can hold the library, else the legacy place with the reason.
+static void decide_base() {
+    if (g_base_decided) return;
+    g_base_decided = true;
+    std::string p = portable_data_dir();
+    if (p.empty()) {
+        g_base = legacy_launcher_home();
+        return;
+    }
+    std::error_code ec;
+    fs::path dir = p, parent = dir.parent_path();
+    std::string why;
+    if (fs::is_directory(dir, ec)) {
+        if (access(dir.c_str(), W_OK) != 0) why = "it can't be written";
+    } else if (!fs::is_directory(parent, ec)) why = "its folder is not there";
+    else if (access(parent.c_str(), W_OK) != 0) why = "that folder can't be written";
+    else runs_programs(parent, why);
+    if (why.empty()) {
+        g_base = p;
+        return;
+    }
+    g_base = legacy_launcher_home();
+    g_base_note = "Country-Box keeps its data in " + g_base + " because " + p + " can't be used (" + why + ").";
+}
+
+std::string default_launcher_home() {
+    decide_base();
+    return g_base;
+}
+
+std::string base_note() {
+    decide_base();
+    return g_base_note;
+}
+
+void set_base_home(const std::string &dir) {
+    decide_base();
+    g_base = dir;
+}
+
 std::string library_location_file() { return default_launcher_home() + "/library-location"; }
+
+void contain_temp_files(const std::string &base) {
+    if (base.empty()) return;
+    std::error_code ec;
+    fs::create_directories(base + "/tmp", ec);
+    fs::create_directories(base + "/cache", ec);
+    setenv("TMPDIR", (base + "/tmp").c_str(), 1);
+    setenv("XDG_CACHE_HOME", (base + "/cache").c_str(), 1);   // pip, Mesa's cache for the launcher's own window
+}
 
 static std::string human(double b) {
     char t[64];
@@ -91,6 +165,141 @@ static bool copy_tree(const fs::path &src, const fs::path &dst, std::atomic<int6
         if (ec) return err = src.string() + ": " + ec.message(), false;
         if (!one(it->path(), dst / it->path().lexically_relative(src))) return false;
     }
+    return true;
+}
+
+static bool same_bytes(const fs::path &a, const fs::path &b) {
+    std::ifstream x(a, std::ios::binary), y(b, std::ios::binary);
+    char p[65536], q[65536];
+    for (;;) {
+        x.read(p, sizeof p), y.read(q, sizeof q);
+        if (x.gcount() != y.gcount() || memcmp(p, q, (size_t)x.gcount())) return false;
+        if (!x || !y) return x.eof() && y.eof();
+    }
+}
+
+// What a save or a setting looks like: read back byte for byte after a copy (the rest is compared by size: the
+// builds and the generated C are many gigabytes and can be made again).
+static bool precious(const fs::path &rel) {
+    std::string s = rel.string(), ext = rel.extension().string();
+    return s.find("profile/") != std::string::npos || s.rfind("profile", 0) == 0 || ext == ".ini" || ext == ".json" ||
+           rel.filename() == "library-location";
+}
+
+// The copy at dst holds every regular file of src with its size (and the same bytes for precious ones).
+static bool same_tree(const fs::path &src, const fs::path &dst, std::string &err) {
+    std::error_code ec;
+    auto one = [&](const fs::path &s, const fs::path &d, const fs::path &rel) {
+        std::error_code e;
+        if (fs::is_symlink(fs::symlink_status(s, e))) return fs::is_symlink(fs::symlink_status(d, e)) || (err = d.string() + ": missing", false);
+        if (!fs::is_regular_file(s, e)) return true;
+        if (!fs::is_regular_file(d, e) || fs::file_size(s, e) != fs::file_size(d, e)) return err = d.string() + ": size differs", false;
+        if (precious(rel) && !same_bytes(s, d)) return err = d.string() + ": contents differ", false;
+        return true;
+    };
+    if (!fs::is_directory(fs::symlink_status(src, ec))) return one(src, dst, src.filename());
+    for (auto it = fs::recursive_directory_iterator(src, ec); it != fs::recursive_directory_iterator(); it.increment(ec)) {
+        if (ec) return err = src.string() + ": " + ec.message(), false;
+        fs::path rel = it->path().lexically_relative(src);
+        if (!one(it->path(), dst / rel, src.filename() / rel)) return false;
+    }
+    return true;
+}
+
+// ---- saves first: a copy on the Desktop before any move (relocate.h)
+
+std::string desktop_dir() {
+    if (const char *o = getenv("CB_DESKTOP_DIR"); o && *o) return o;
+    std::error_code ec;
+#ifdef _WIN32
+    if (const char *u = getenv("USERPROFILE"); u && *u && fs::is_directory(std::string(u) + "/Desktop", ec))
+        return std::string(u) + "/Desktop";
+#endif
+    const char *h = getenv("HOME");
+    std::string home = h && *h ? h : ".";
+    const char *xc = getenv("XDG_CONFIG_HOME");
+    std::ifstream f((xc && *xc ? std::string(xc) : home + "/.config") + "/user-dirs.dirs");
+    for (std::string line; std::getline(f, line);) {
+        if (line.rfind("XDG_DESKTOP_DIR=", 0) != 0) continue;
+        std::string v = line.substr(16);
+        if (v.size() >= 2 && v.front() == '"' && v.back() == '"') v = v.substr(1, v.size() - 2);
+        if (v.rfind("$HOME", 0) == 0) v = home + v.substr(5);
+        while (v.size() > 1 && v.back() == '/') v.pop_back();
+        if (!v.empty() && v != home && fs::is_directory(v, ec)) return v;
+    }
+    if (fs::is_directory(home + "/Desktop", ec)) return home + "/Desktop";
+    return home;
+}
+
+static std::string now_text(const char *fmt) {
+    time_t t = time(nullptr);
+    struct tm tmv {};
+#ifdef _WIN32
+    localtime_s(&tmv, &t);
+#else
+    localtime_r(&t, &tmv);
+#endif
+    char b[64];
+    strftime(b, sizeof b, fmt, &tmv);
+    return b;
+}
+
+bool backup_saves(const std::string &library, const std::string &moving_to, std::string &dir, std::string &err) {
+    dir.clear();
+    std::error_code ec;
+    fs::path games = fs::path(library) / "games";
+    std::vector<std::pair<std::string, fs::path>> found;   // (game id, its folder) with something to keep
+    for (auto it = fs::directory_iterator(games, ec); !ec && it != fs::directory_iterator(); it.increment(ec)) {
+        std::error_code e;
+        if (!it->is_directory(e)) continue;
+        if (fs::exists(it->path() / "profile", e) || fs::exists(it->path() / "mp4.ini", e))
+            found.push_back({it->path().filename().string(), it->path()});
+    }
+    if (found.empty()) return true;
+    fs::path desk = desktop_dir();
+    std::string base = "Country-Box saves backup " + now_text("%Y-%m-%d %H-%M");
+    fs::path out = desk / base;
+    for (int n = 2; fs::exists(out, ec); n++) out = desk / (base + " (" + std::to_string(n) + ")");
+    fs::create_directories(out, ec);
+    if (ec) return err = out.string() + ": " + ec.message(), false;
+    std::atomic<int64_t> done{0};
+    std::string lines;
+    for (auto &g : found) {
+        const Manifest *m = manifest_get(g.first);
+        std::string name = m && !m->name.empty() ? m->name : g.first;
+        for (size_t at; (at = name.find(": ")) != std::string::npos;) name.replace(at, 2, " - ");   // "Country: Tropical"
+        for (char &c : name)
+            if (strchr("/\\:*?\"<>|", c)) c = '-';
+        fs::path to = out / name;
+        fs::create_directories(to, ec);
+        for (const char *item : {"profile", "mp4.ini"}) {
+            fs::path src = g.second / item;
+            if (!fs::exists(src, ec)) continue;
+            if (!copy_tree(src, to / item, done, err)) return false;
+            // read back: every file, byte for byte
+            if (fs::is_directory(src, ec)) {
+                for (auto it = fs::recursive_directory_iterator(src, ec); !ec && it != fs::recursive_directory_iterator(); it.increment(ec)) {
+                    std::error_code e;
+                    if (!it->is_regular_file(e)) continue;
+                    fs::path d = to / item / it->path().lexically_relative(src);
+                    if (!same_bytes(it->path(), d)) return err = d.string() + ": the copy does not match", false;
+                }
+                if (ec) return err = src.string() + ": " + ec.message(), false;
+            } else if (!same_bytes(src, to / item)) return err = (to / item).string() + ": the copy does not match", false;
+        }
+        lines += "  " + name + "/   (game id " + g.first + ")\n";
+    }
+    std::ofstream r(out / "README.txt");
+    r << "Country-Box: a copy of your saves\n\n"
+      << "Made on " << now_text("%Y-%m-%d at %H:%M") << ", just before Country-Box moved your library\n"
+      << "  from " << library << "\n  to   " << moving_to << "\n\n"
+      << "Your saves moved with your games, so you don't need to do anything: this folder is an extra copy, in case.\n\n"
+      << lines << "\n"
+      << "Each game's folder holds its profile/ (the saves) and mp4.ini (its settings). To put one back, close the game\n"
+      << "and copy them into that game's folder in your library (games/<game id>/).\n\n"
+      << "You can delete this folder whenever you like.\n";
+    if (!r) return err = (out / "README.txt").string() + ": cannot write", false;
+    dir = out.string();
     return true;
 }
 
@@ -157,11 +366,9 @@ static bool runs_programs(const fs::path &dir, std::string &why) {
 #endif
 }
 
-void move_library(const std::string &from_in, const std::string &picked, LibraryMove &m) {
-    auto fail = [&](const std::string &h, const std::string &e) {
-        m.ok = false, m.headline = h, m.explain = e;
-        m.finished.store(true);
-    };
+// The move itself; the caller sets m.finished (a migration has steps after it).
+static void move_impl(const std::string &from_in, const std::string &picked, LibraryMove &m) {
+    auto fail = [&](const std::string &h, const std::string &e) { m.ok = false, m.headline = h, m.explain = e; };
     std::error_code ec;
     fs::path from = fs::weakly_canonical(from_in, ec);
     fs::path to = library_target(picked);
@@ -170,6 +377,7 @@ void move_library(const std::string &from_in, const std::string &picked, Library
     if (to == from) return fail("Your library is already there.", m.to);
     if (to.string().rfind(from.string() + "/", 0) == 0)
         return fail("That folder is inside your library.", "Pick a folder outside " + m.from + ".");
+    const std::set<std::string> &stay = m.everything ? kStayMigration : kStay;
     bool to_default = to == fs::weakly_canonical(default_launcher_home(), ec);
     auto only_tools = [&] {
         std::error_code e;
@@ -182,7 +390,7 @@ void move_library(const std::string &from_in, const std::string &picked, Library
     // what moves
     std::vector<fs::path> items;
     for (auto it = fs::directory_iterator(from, ec); !ec && it != fs::directory_iterator(); it.increment(ec))
-        if (!kStay.count(it->path().filename().string())) items.push_back(it->path());
+        if (!stay.count(it->path().filename().string())) items.push_back(it->path());
     if (ec && fs::exists(from)) return fail("Your library can't be read.", m.from + ": " + ec.message());
     bool made_to = !fs::exists(to, ec);
     fs::create_directories(to, ec);
@@ -191,6 +399,17 @@ void move_library(const std::string &from_in, const std::string &picked, Library
         std::error_code e;
         if (made_to) fs::remove_all(to, e);
         return fail("Games can't run from that drive.", m.to + ": " + why + ". Pick a folder on a Linux-formatted drive (ext4, btrfs, xfs…).");
+    }
+    if (m.backup_saves) {   // saves first: a checked copy on the Desktop, or nothing moves (relocate.h)
+        std::string err;
+        if (!backup_saves(m.from, m.to, m.backup, err)) {
+            std::error_code e;
+            if (made_to) fs::remove_all(to, e);
+            if (!m.backup.empty()) fs::remove_all(m.backup, e);
+            m.backup.clear();
+            return fail("Your saves could not be copied to the Desktop first, so nothing was moved.",
+                        err + ". Your library is still in " + m.from + ".");
+        }
     }
     auto undo_dir = [&] {
         std::error_code e;
@@ -215,7 +434,7 @@ void move_library(const std::string &from_in, const std::string &picked, Library
         }
         rewrite_builds(to / "library.ini", m.from, m.to);
         std::string err;
-        if (!write_location(m.to, err)) {
+        if (!m.everything && !m.no_record && !write_location(m.to, err)) {   // a migration records its place itself
             for (auto &q : moved) fs::rename(to / q.filename(), q, ec);
             undo_dir();
             return fail("The new place could not be recorded.", err);
@@ -236,8 +455,13 @@ void move_library(const std::string &from_in, const std::string &picked, Library
                 undo_dir();
                 return fail("The library could not be copied.", err + ". Nothing was changed; it is still in " + m.from + ".");
             }
+        for (auto &p : items)   // read back before anything old goes: sizes everywhere, the bytes of saves and settings
+            if (!same_tree(p, to / p.filename(), err)) {
+                undo_dir();
+                return fail("The copy did not match the library.", err + ". Nothing was changed; it is still in " + m.from + ".");
+            }
         rewrite_builds(to / "library.ini", m.from, m.to);
-        if (!write_location(m.to, err)) {
+        if (!m.everything && !m.no_record && !write_location(m.to, err)) {
             undo_dir();
             return fail("The new place could not be recorded.", err);
         }
@@ -246,5 +470,136 @@ void move_library(const std::string &from_in, const std::string &picked, Library
     // the old folder goes too when nothing is left in it and it is not the default place (which keeps tools)
     if (fs::weakly_canonical(default_launcher_home(), ec) != from && is_empty_dir(from)) fs::remove(from, ec);
     m.ok = true;
+}
+
+void move_library(const std::string &from, const std::string &picked, LibraryMove &m) {
+    move_impl(from, picked, m);
     m.finished.store(true);
+}
+
+// ---- first-run migration (relocate.h)
+
+static bool holds_library(const fs::path &d) {
+    std::error_code ec;
+    return fs::is_regular_file(d / "library.ini", ec) || fs::is_directory(d / "games", ec);
+}
+
+// The nearest folder that exists at or above p (the data folder may not exist yet: its drive is its parent's).
+static fs::path existing_ancestor(fs::path p) {
+    std::error_code ec;
+    while (!p.empty() && !fs::exists(p, ec) && p != p.parent_path()) p = p.parent_path();
+    return p;
+}
+
+// A process (an older launcher's game, a Prepare) running a program from inside dir, or working in it.
+static bool something_runs_from(const fs::path &dir) {
+    std::error_code ec;
+    std::string root = fs::weakly_canonical(dir, ec).string() + "/";
+    std::string self = std::to_string(getpid());
+    for (auto &e : fs::directory_iterator("/proc", ec)) {
+        std::string pid = e.path().filename().string();
+        if (pid.empty() || !isdigit((unsigned char)pid[0]) || pid == self) continue;
+        for (const char *what : {"exe", "cwd"}) {
+            char buf[4096];
+            ssize_t n = readlink(("/proc/" + pid + "/" + what).c_str(), buf, sizeof buf - 1);
+            if (n > 0 && std::string(buf, (size_t)n).rfind(root, 0) == 0) return true;
+        }
+    }
+    return false;
+}
+
+Migration plan_migration() {
+    Migration m;
+    std::string p = portable_data_dir();
+    if (p.empty() || !base_note().empty()) return m;   // a bare binary, or the data folder can't be used
+    std::error_code ec;
+    fs::path from = legacy_launcher_home(), to = p;
+    if (!fs::is_directory(from, ec) || fs::is_empty(from, ec) || holds_library(to)) return m;
+    if (fs::weakly_canonical(from, ec) == fs::weakly_canonical(to, ec)) return m;
+    if (fs::exists(to, ec) && !fs::is_empty(to, ec)) return m;   // something else is there: never mixed in
+    m.from = from.string(), m.to = to.string(), m.library = m.from;
+    {   // "keep it where it is" (keep_library_here): the old place stays, and nobody asks again
+        std::ifstream c(from / "library-choice");
+        std::string choice;
+        std::getline(c, choice);
+        if (choice.rfind("keep", 0) == 0) {
+            m.stay = true;
+            return m;
+        }
+    }
+    std::ifstream f(from / "library-location");   // a library the player moved elsewhere stays there
+    std::string moved;
+    std::getline(f, moved);
+    while (!moved.empty() && strchr(" \t\r\n", moved.back())) moved.pop_back();
+    if (!moved.empty() && fs::is_directory(moved, ec)) m.library = moved;
+    struct stat a {}, b {};
+    fs::path anc = existing_ancestor(to);
+    m.same_drive = stat(from.c_str(), &a) == 0 && stat(anc.c_str(), &b) == 0 && a.st_dev == b.st_dev;
+    m.busy = something_runs_from(from);
+    m.needed = true;
+    return m;
+}
+
+bool keep_library_here(const Migration &plan, std::string &err) {
+    std::string file = (fs::path(plan.from) / "library-choice").string(), tmp = file + ".tmp";
+    {
+        std::ofstream f(tmp, std::ios::trunc);
+        f << "keep (" << now_text("%Y-%m-%d %H:%M") << "): the library stays here; the launcher does not ask again\n";
+        if (!f) return err = "cannot write " + tmp, false;
+    }
+    if (rename(tmp.c_str(), file.c_str())) return err = "cannot write " + file + ": " + strerror(errno), false;
+    return true;
+}
+
+// What a migration leaves behind in the old place: temporary files, caches, records. It goes once empty.
+static void tidy_old_place(const fs::path &from) {
+    std::error_code ec;
+    for (const char *gone : {"tmp", "cache", "import", "library-location", "library-choice"}) fs::remove_all(from / gone, ec);
+    if (is_empty_dir(from)) fs::remove(from, ec);
+}
+
+void migrate_library(const Migration &plan, const std::string &picked, LibraryMove &mv) {
+    auto done = [&] { mv.finished.store(true); };
+    std::error_code ec;
+    std::string err;
+    fs::path from = plan.from;
+    bool to_data = picked.empty() || fs::weakly_canonical(picked, ec) == fs::weakly_canonical(plan.to, ec);
+    if (to_data) {   // everything, tools included, into the data folder
+        mv.everything = true;
+        move_impl(plan.from, plan.to, mv);
+        if (!mv.ok) return done();
+        set_base_home(plan.to);
+        if (plan.library != plan.from && !write_location(plan.library, err)) {
+            // the library itself did not move; without its record the next start would not find it: say so
+            mv.ok = false;
+            mv.headline = "The data folder could not record where your library is.";
+            mv.explain = err + ". Your library is still in " + plan.library + ".";
+            set_base_home(plan.from);
+            return done();
+        }
+        tidy_old_place(from);
+        return done();
+    }
+    // the folder the player picked: the library goes there; the tools and the record of that place go to the data
+    // folder, which stays the base (it is what a portable Country-Box looks at first)
+    mv.no_record = true;
+    move_impl(plan.from, picked, mv);   // python/ and app/ stay behind (kStay)
+    if (!mv.ok) return done();
+    LibraryMove tools;
+    tools.everything = true, tools.backup_saves = false;
+    move_impl(plan.from, plan.to, tools);
+    if (tools.ok) set_base_home(plan.to);
+    if (!write_location(mv.to, err)) {
+        // the data folder can't hold the record: the old place keeps it (and the tools, if they did not move), so
+        // the next start finds the library and brings the rest over
+        set_base_home(plan.from);
+        if (!write_location(mv.to, err)) {
+            mv.ok = false;
+            mv.headline = "Your library moved, but its new place could not be recorded.";
+            mv.explain = "It is in " + mv.to + " now (" + err + "). Choose it with Move library on the About tab.";
+        }
+        return done();
+    }
+    if (tools.ok) tidy_old_place(from);
+    done();
 }

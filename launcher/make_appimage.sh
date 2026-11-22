@@ -13,10 +13,14 @@
 #
 #   sh launcher/make_appimage.sh [OUT_DIR]     (por defecto build/; necesita appimagetool en el PATH o en ~/.local/bin)
 #
+# Deja en OUT_DIR lo que sube a la release: la AppImage, el tarball del mismo árbol (make_tarball.sh,
+# Country-Box-linux-x86_64.tar.gz) y SHA256SUMS con los dos.
+#
 # El launcher y SDL se arman en ubuntu:22.04 (glibc 2.35) para que la AppImage corra en cualquier distribución
 # con esa glibc o más nueva; armados en esta máquina pedirían su glibc (Arch: 2.43) y no arrancarían en Ubuntu,
 # Debian, Mint ni SteamOS. Al final se revisa: nada dentro puede pedir más de GLIBC_2.35.
 # CB_APPIMAGE_LOCAL=1 arma con el sistema (sólo para pruebas en esta máquina; no sale en una release).
+# CB_XLATE_DIR: el traductor (mp4_xlate) de otra carpeta, para make_prep_payload.py --xlate (un worktree sin core/build).
 set -eu
 umask 022   # la AppImage la corren otros usuarios: appimagetool rechaza carpetas y programas 0700
 ROOT=$(cd "$(dirname "$0")/.." && pwd)
@@ -69,7 +73,7 @@ else
         -e SDL_TAG="$SDL_TAG" -e HOST_UID="$KUID" -e HOST_GID="$KGID" ubuntu:22.04 sh /src/launcher/appimage/toolkit-build.sh
     cp -a "$OUT/appimage/container/toolkit" "$APPDIR/usr/share/country-box/toolkit"
 fi
-python3 "$ROOT/launcher/make_prep_payload.py" "$APPDIR/usr/share/country-box/prep"
+python3 "$ROOT/launcher/make_prep_payload.py" "$APPDIR/usr/share/country-box/prep" ${CB_XLATE_DIR:+--xlate "$CB_XLATE_DIR"}
 # la garantía: ningún programa o biblioteca de la AppImage pide una glibc más nueva que 2.35
 if [ "${CB_APPIMAGE_LOCAL:-}" != 1 ]; then
     worst=$(find "$APPDIR" -type f \( -perm -u+x -o -name '*.so*' \) -exec sh -c 'objdump -T "$1" 2>/dev/null' _ {} \; |
@@ -88,3 +92,7 @@ chmod 644 "$APPDIR/recomplauncher.json"   # the repo keeps its files 0600; other
 IMG=$OUT/Country-Box-$VERSION-linux-x86_64.AppImage
 ARCH=x86_64 "$TOOL" --no-appstream "$APPDIR" "$IMG"
 echo "built $IMG"
+sh "$ROOT/launcher/make_tarball.sh" "$APPDIR" "$OUT"
+# el actualizador verifica con esta lista (update.cpp) cuando el asset no trae digest
+(cd "$OUT" && sha256sum "$(basename "$IMG")" Country-Box-linux-x86_64.tar.gz > SHA256SUMS)
+echo "built $OUT/SHA256SUMS"

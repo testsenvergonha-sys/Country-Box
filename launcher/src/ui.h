@@ -22,7 +22,7 @@ struct UiFonts {
 class Ui {
 public:
     enum class Tab { Games, Settings, About };
-    enum class Flow { None, Browse, Checking, Result, Prepare, Import, UpdateAsk, Updating, UpdateResult, Moving };
+    enum class Flow { None, Browse, Checking, Result, Prepare, Import, UpdateAsk, Updating, UpdateResult, Moving, Choose };
 
     ~Ui();
     explicit Ui(Library &lib) : lib_(lib) {}
@@ -50,6 +50,13 @@ public:
     // Moving the library (relocate.h): the browser picks the new folder, then the move runs with its progress.
     void start_library_browse();
     void start_library_move(const std::string &picked);
+    // The 1.0.7 first-start question (relocate.h): keep the library where it is, move it next to Country-Box, or
+    // to a folder the player picks; then the move runs on the same progress screen (saves first copied to the
+    // Desktop). "later" closes it and asks again next start. migration_choice: keep|here|folder|later (--auto).
+    void ask_migration(const Migration &plan);
+    void migration_choice(const std::string &what);
+    void start_migration(const Migration &plan, const std::string &picked);
+    void notice(const std::string &text);   // a line about the data folder: a toast now, and on the About tab
     bool moving_finished() const { return !move_ || move_->finished.load(); }   // the desktop's folder dialog; its answer goes through browse_go
     // Prepare progress for --auto: true once the stage reached `stage` (and `done` units of it, if given).
     bool prep_reached(int stage, int done) const {
@@ -97,6 +104,7 @@ private:
     void draw_updating(ImVec2 mn, ImVec2 mx);
     void draw_update_result(ImVec2 mn, ImVec2 mx);
     void draw_moving(ImVec2 mn, ImVec2 mx);
+    void draw_choose(ImVec2 mn, ImVec2 mx);
     void draw_footer(ImVec2 mn, ImVec2 mx);
     void draw_toast(ImVec2 mn, ImVec2 mx);
     void draw_running(ImVec2 mn, ImVec2 mx);
@@ -146,6 +154,9 @@ private:
     // library move
     std::unique_ptr<LibraryMove> move_;
     std::thread move_thread_;
+    Migration migration_;              // the question (Choose), then move_ is this migration when migration_.needed
+    bool migrate_pick_ = false;        // the browser picks where the migration goes
+    std::string notice_;
     // settings
     std::string settings_game_;
     Json dump_;

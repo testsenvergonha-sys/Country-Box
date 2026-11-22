@@ -18,6 +18,20 @@ It does not extract, decrypt or dump anything. See [../LEGAL.md](../LEGAL.md).
 With an AI agent: give it [AGENT-INSTALL.md](../AGENT-INSTALL.md) — it drives the launcher's command line
 (`--status`, `--add`, `--prepare`, `--play`), which answers in JSON.
 
+## Start a game directly (Steam, shortcuts)
+
+Once a game is prepared, the AppImage can start it without opening the launcher:
+
+```sh
+./Country-Box-*.AppImage --returns    # Donkey Kong Country Returns HD
+./Country-Box-*.AppImage --freeze     # Donkey Kong Country: Tropical Freeze
+```
+
+(`--play returns` and `--play freeze` do the same.) **In Steam:** *Add a Non-Steam Game* → pick the AppImage, then in
+its *Properties* → *Launch Options* write `--returns` or `--freeze`. Add it twice to have one entry per game. If the
+game can't start yet (not prepared, or the copy's drive isn't connected), a window says why; open the launcher to fix
+it.
+
 ## Requirements
 
 **Game copy** — Nintendo Switch version 1.0.0, no update applied:

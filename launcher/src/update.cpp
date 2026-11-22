@@ -11,6 +11,11 @@
 //   backups/<id>/    the saves (each game's profile/ and mp4.ini) as they were just before an update was installed
 //   cache/           the downloaded package, moved into place by the install
 //
+// Run from the AppImage ($APPIMAGE) the package is the release's .AppImage and replaces that file (the previous one
+// stays as <name>.old). Run from the extracted tarball (CB_PORTABLE_EXE is its folder, AppRun) the package is the
+// release's Country-Box-linux-x86_64.tar.gz: it is unpacked next to that folder, which is then swapped in with two
+// renames (the previous one stays as Country-Box.old). Either way the data folder next to it is not touched.
+//
 // The games' builds (<home>/games/<game>/ or wherever the library points), the checked copies and library.ini are
 // never touched by an update; the saves are additionally copied to backups/ before anything is installed.
 #include "update.h"
@@ -32,6 +37,7 @@
 
 #include "json.h"
 #include "library.h"
+#include "proc.h"
 #include "sha256.h"
 
 namespace fs = std::filesystem;
@@ -241,6 +247,14 @@ bool update_ini_set(const std::string &home, const std::string &key, const std::
     return ::rename(tmp.c_str(), (home + "/update.ini").c_str()) == 0;
 }
 
+// The extracted tarball this launcher runs from (AppRun's CB_PORTABLE_EXE when it is a folder), "" otherwise.
+static std::string tarball_dir() {
+    if (getenv("APPIMAGE") && *getenv("APPIMAGE")) return "";
+    const char *e = getenv("CB_PORTABLE_EXE");
+    std::error_code ec;
+    return e && *e && fs::is_directory(e, ec) && fs::is_regular_file(std::string(e) + "/AppRun", ec) ? e : "";
+}
+
 std::string update_api_url(const std::string &home) {
     const char *e = getenv("CB_UPDATE_API");
     if (e && *e) return e;
@@ -312,9 +326,13 @@ UpdateInfo update_check(const std::string &home, std::string *err_out) {
         const Json &a = j["assets"][k];
         std::string n = a["name"].s();
         // Run from an AppImage ($APPIMAGE): the package is the release's .AppImage, which replaces that file.
-        bool want_appimage = getenv("APPIMAGE") && *getenv("APPIMAGE");
+        // From the extracted tarball: the release's tarball, unpacked over it.
+        bool want_appimage = getenv("APPIMAGE") && *getenv("APPIMAGE"), want_tar = !tarball_dir().empty();
         bool is_appimage = n.size() > 9 && n.compare(n.size() - 9, 9, ".AppImage") == 0;
-        if (n == "SHA256SUMS" || (want_appimage ? !is_appimage : n.find("country-box-launcher") == std::string::npos)) continue;
+        bool is_tar = n.size() > 7 && n.compare(n.size() - 7, 7, ".tar.gz") == 0 && n.find("Country-Box") != std::string::npos;
+        if (n == "SHA256SUMS" ||
+            (want_appimage ? !is_appimage : want_tar ? !is_tar : n.find("country-box-launcher") == std::string::npos))
+            continue;
         asset = &a;
         break;
     }
@@ -488,6 +506,45 @@ void UpdateJob::run() {
             fs::remove(fresh, ec);
             return fail("the new AppImage could not replace " + target);
         }
+        ::remove(part.c_str());
+        installed_dir = target;
+        to_version = info_.version;
+        for (auto &gb : game_builds_)
+            if (access((gb.second + "/country-box").c_str(), X_OK) == 0) need_prepare.push_back(gb.first);
+        return finish_ok();
+    }
+
+    // 4b. Tarball: unpack next to the folder it runs from, check it is a Country-Box tree, swap it in.
+    if (std::string target = tarball_dir(); !target.empty()) {
+        while (target.size() > 1 && target.back() == '/') target.pop_back();
+        std::string fresh = target + ".new", old_copy = target + ".old", tar;
+        from_version = launcher_version();
+        for (const char *d : {"/usr/bin/tar", "/bin/tar"})
+            if (access(d, X_OK) == 0) { tar = d; break; }
+        if (tar.empty()) return fail("tar is not on this computer; nothing was installed");
+        fs::remove_all(fresh, ec);
+        fs::create_directories(fresh, ec);
+        std::string out;
+        if (ec || proc_run({tar, "-xzf", part, "-C", fresh}, fresh, {}, out, 300000) != 0) {
+            fs::remove_all(fresh, ec);
+            return fail("the new version could not be unpacked next to " + target + "; nothing was installed");
+        }
+        std::string inner = fresh + "/Country-Box";
+        if (!fs::is_regular_file(inner + "/AppRun", ec) || !fs::is_regular_file(inner + "/usr/bin/country-box-launcher", ec)) {
+            fs::remove_all(fresh, ec);
+            return fail("the downloaded package is not a Country-Box folder; nothing was installed");
+        }
+        fs::remove_all(old_copy, ec);
+        if (::rename(target.c_str(), old_copy.c_str()) != 0) {
+            fs::remove_all(fresh, ec);
+            return fail("the folder " + target + " could not be replaced (" + strerror(errno) + "); nothing was installed");
+        }
+        if (::rename(inner.c_str(), target.c_str()) != 0) {
+            ::rename(old_copy.c_str(), target.c_str());   // put the running one back
+            fs::remove_all(fresh, ec);
+            return fail("the new version could not be moved into " + target + "; nothing was installed");
+        }
+        fs::remove_all(fresh, ec);
         ::remove(part.c_str());
         installed_dir = target;
         to_version = info_.version;

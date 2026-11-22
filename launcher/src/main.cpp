@@ -1,8 +1,12 @@
 // Country-Box launcher: entry point. With no action it opens the hub window (SDL 3 + SDL_Renderer + Dear ImGui, the
 // runtime's stack); every action also exists on the command line, for scripts and tests:
 //
-//   country-box-launcher [--home DIR]                     the hub (fullscreen under gamescope / Steam Deck Game Mode)
-//       --size WxH | --fullscreen                         window size (default 1280x800, the Deck's panel)
+//   country-box-launcher [--data-dir DIR]                 the hub (fullscreen under gamescope / Steam Deck Game Mode);
+//                                                          --home DIR is the same. Default: Country-Box-data next to
+//                                                          the AppImage / extracted folder (relocate.h)
+//       --resolution WxH | --fullscreen | --windowed      window size (default 1280x800, the Deck's panel); with
+//                                                          --play / --skip they set the game's window for that run
+//       --no-update                                       no update check this run (CB_LAUNCHER_NO_UPDATE=1)
 //       --shot-dir DIR --auto "step;step;..."             scripted run: steps below, screenshots into DIR
 //   country-box-launcher --status                          every game's state as JSON
 //   country-box-launcher --verify GAME FOLDER [--quick]    check a copy against games/GAME/manifest.toml (JSON; exit 0 ok, 1 not)
@@ -13,18 +17,22 @@
 //   country-box-launcher --import-build GAME PATH          install a build Prepare made on another computer (folder
 //                                                          or .tar/.tar.gz/.tar.zst), checked against this copy
 //   country-box-launcher --set-build GAME DIR              use the game binary in DIR (DIR/country-box)
+//   country-box-launcher --skip [GAME]                     straight into the game without the hub: GAME, else the one
+//                                                          played last, else the one ready; the hub opens instead only
+//                                                          when no game is ready to play
 //   country-box-launcher --play GAME                       start the game and wait for it, without the hub (Steam
 //                                                          launch options, shortcuts); --returns / --freeze for short.
 //                                                          Without a terminal, a game that can't start says why in
 //                                                          a window
 //   country-box-launcher --move-library DIR                move the library (builds, saves, logs) to DIR, or to
 //                                                          DIR/Country-Box when DIR has files; later runs use it
+//   country-box-launcher --library-choice keep|here|DIR    answer the 1.0.7 first-start question without the window
 //
 // --auto steps: frames:N, tab:games|settings|about, browse:GAME:DIR, add:GAME:FOLDER, prepare:GAME[:shaders],
 // import:GAME, wait-check, wait-prep, wait-stage:S[:N] (S: 2 lift, 3 compile, 4 shaders), settings-game:GAME,
 // key:NAME (down|up|left|right|a|b|lb|rb), pad (show the controller cursor), nav (print the focus), shot:NAME, quit,
 // update-wait (until the update check answered), update-ask (show the dialog), update-now, update-notnow,
-// go:PATH (the browser's path field), system-picker, library-browse, move-here, wait-move, wheel:X:Y:NOTCHES, mouse:X:Y:0|1 (X, Y: fractions of the window).
+// go:PATH (the browser's path field), system-picker, library-browse, move-here, wait-move, choose:keep|here|folder|later, wheel:X:Y:NOTCHES, mouse:X:Y:0|1 (X, Y: fractions of the window).
 // CB_LAUNCHER_DEBUG_NAV=1 logs Dear ImGui's navigation and focus events. CB_LAUNCHER_NO_UPDATE=1 skips the check.
 #include <SDL3/SDL.h>
 
@@ -56,16 +64,45 @@ static const unsigned char kRoboto[] = {
 #embed "../../core/runtime/ui/fonts/Roboto-Medium.ttf"
 };
 
-static void usage() {
-    fprintf(stderr,
-            "usage: country-box-launcher [--home DIR] [--size WxH | --fullscreen] [--shot-dir DIR --auto STEPS]\n"
-            "       country-box-launcher [--home DIR] --status | --verify GAME FOLDER [--quick] | --add GAME FOLDER |\n"
-            "                            --set-build GAME DIR | --prepare GAME [--shaders] | --import-build GAME PATH |\n"
-            "                            --play GAME | --check-update | --update | --setup GAME=FOLDER... (GAME: dkcrhd, dkctf or auto) |\n"
-            "                            --move-library DIR\n"
-            "       country-box-launcher --returns | --freeze           (the same as --play returns / --play freeze)\n"
-            "games: returns or dkcrhd (Returns HD), freeze or dkctf (Tropical Freeze)\n"
-            "update channel: CB_UPDATE_API or <home>/update.ini api_url (default: this project's GitHub Releases)\n");
+static void usage(FILE *to = stderr) {
+    fprintf(to,
+            "Country-Box %s\n"
+            "usage: country-box [OPTIONS] [ACTION]\n"
+            "\n"
+            "With no action the launcher window opens. Start the game straight away, without the launcher:\n"
+            "  --skip [GAME]            the game played last (or GAME, or the one that is ready); opens the launcher\n"
+            "                           only when no game is ready to play\n"
+            "  --play GAME              that game; says why in a window when it can't start yet\n"
+            "  --returns, --freeze      the same as --play returns / --play freeze\n"
+            "\n"
+            "Window (the launcher's, or the game's for this run with --skip / --play):\n"
+            "  --fullscreen             full screen\n"
+            "  --windowed               a window\n"
+            "  --resolution WxH         window size, e.g. 1920x1080 (--size WxH is the same)\n"
+            "\n"
+            "Folders:\n"
+            "  --data-dir DIR           keep everything (builds, saves, settings, logs, caches) in DIR for this run\n"
+            "                           (--home DIR and CB_LAUNCHER_HOME=DIR are the same). Default: the folder\n"
+            "                           Country-Box-data next to the AppImage or the extracted Country-Box folder\n"
+            "  --add [GAME] FOLDER      check your extracted copy (the folder with exefs/ and romfs/) and keep it;\n"
+            "                           without GAME the copy says which game it is\n"
+            "  --verify [GAME] FOLDER [--quick]  only check a copy (JSON; exit 0 when it is good)\n"
+            "  --set-build GAME DIR     play the build in DIR (DIR/country-box) instead of the data folder's\n"
+            "  --move-library DIR       move the library to DIR (or DIR/Country-Box when DIR has files)\n"
+            "  --library-choice keep|here|DIR  first start of 1.0.7 with a library in ~/.local/share: keep it there,\n"
+            "                           move it next to Country-Box, or to DIR, without asking (the window asks)\n"
+            "\n"
+            "Building and updating:\n"
+            "  --prepare GAME [--shaders]    build the game from your checked copy (resumable)\n"
+            "  --import-build GAME PATH      install a build made on another computer (folder or .tar)\n"
+            "  --setup GAME=FOLDER...        check and prepare in one go (GAME: dkcrhd, dkctf or auto)\n"
+            "  --check-update | --update     look for / install a new Country-Box (asks nothing)\n"
+            "  --no-update                   don't look for updates this run (CB_LAUNCHER_NO_UPDATE=1)\n"
+            "\n"
+            "Other: --status (JSON), --version, --help. Scripted screenshots: --shot-dir DIR --auto STEPS.\n"
+            "Games: returns or dkcrhd (Returns HD), freeze or dkctf (Tropical Freeze).\n"
+            "Update channel: CB_UPDATE_API or <data>/update.ini api_url (default: this project's GitHub Releases).\n",
+            launcher_version().c_str());
 }
 
 static void load_fonts(UiFonts &f, float s) {
@@ -121,7 +158,8 @@ static std::vector<std::string> split(const std::string &s, char sep) {
     return out;
 }
 
-static int run_hub(Library &lib, int w, int h, bool fullscreen, const std::string &shot_dir, const std::string &auto_steps) {
+static int run_hub(Library &lib, int w, int h, bool fullscreen, const std::string &shot_dir, const std::string &auto_steps,
+                   const Migration *migrate = nullptr, const std::string &notice = "") {
     SDL_SetHint(SDL_HINT_APP_NAME, "Country-Box");
     SDL_SetHint(SDL_HINT_APP_ID, "country-box-launcher");
     if (!SDL_Init(SDL_INIT_VIDEO | SDL_INIT_GAMEPAD)) {
@@ -151,6 +189,8 @@ static int run_hub(Library &lib, int w, int h, bool fullscreen, const std::strin
 
     Ui ui(lib);
     ui.set_scripted(!auto_steps.empty());
+    if (migrate) ui.ask_migration(*migrate);   // the 1.0.7 first-start question (relocate.h)
+    if (!notice.empty()) ui.notice(notice);
     ui.start_update_check();
     float scale = -1;
     std::vector<std::string> steps = auto_steps.empty() ? std::vector<std::string>() : split(auto_steps, ';');
@@ -210,6 +250,7 @@ static int run_hub(Library &lib, int w, int h, bool fullscreen, const std::strin
             else if (op == "system-picker") ui.open_system_picker();
             else if (op == "library-browse") ui.start_library_browse();
             else if (op == "move-here") ui.start_library_move(ui.browse_dir());
+            else if (op == "choose" && parts.size() > 1) ui.migration_choice(parts[1]);
             else if (op == "go") ui.browse_go(st.substr(op.size() + 1));   // the browser's path field
             else if (op == "wheel" && parts.size() > 3)   // wheel:X:Y:NOTCHES (X, Y: fractions of the window; + scrolls down)
                 io.AddMousePosEvent(pw * (float)atof(parts[1].c_str()), ph * (float)atof(parts[2].c_str())),
@@ -369,36 +410,117 @@ int main(int argc, char **argv) {
         unsetenv("CB_APPRUN");
         unsetenv("CB_APPRUN_LD_LIBRARY_PATH");
     }
-    std::string home, shot_dir = ".", auto_steps, action;
+    std::string home, shot_dir = ".", auto_steps, action, game_size, library_choice;
     std::vector<std::string> args;
-    int w = 1280, h = 800;
+    int w = 1280, h = 800, game_fullscreen = -1;   // -1: the game's own setting (mp4.ini)
     bool fullscreen = getenv("GAMESCOPE_WAYLAND_DISPLAY") || getenv("SteamDeck"), quick = false, shaders_only = false;
     for (int i = 1; i < argc; i++) {
         std::string a = argv[i];
         auto next = [&]() -> std::string { return i + 1 < argc ? argv[++i] : ""; };
-        if (a == "--home") home = next();
-        else if (a == "--size") {
+        if (a == "--home" || a == "--data-dir") {
+            home = next();
+            if (home.empty()) return fprintf(stderr, "launcher: %s needs a folder\n", a.c_str()), usage(), 2;
+        } else if (a == "--size" || a == "--resolution") {
             std::string v = next();
-            if (sscanf(v.c_str(), "%dx%d", &w, &h) != 2) return usage(), 2;
-            fullscreen = false;
-        } else if (a == "--fullscreen") fullscreen = true;
+            if (sscanf(v.c_str(), "%dx%d", &w, &h) != 2 || w < 320 || h < 200)
+                return fprintf(stderr, "launcher: %s takes WIDTHxHEIGHT, e.g. 1920x1080\n", a.c_str()), usage(), 2;
+            fullscreen = false, game_size = std::to_string(w) + "x" + std::to_string(h);
+        } else if (a == "--fullscreen") fullscreen = true, game_fullscreen = 1;
+        else if (a == "--windowed") fullscreen = false, game_fullscreen = 0;
+        else if (a == "--no-update") setenv("CB_LAUNCHER_NO_UPDATE", "1", 1);
         else if (a == "--shot-dir") shot_dir = next();
         else if (a == "--auto") auto_steps = next();
+        else if (a == "--library-choice") {
+            library_choice = next();
+            if (library_choice.empty()) return fprintf(stderr, "launcher: --library-choice takes keep, here or a folder\n"), usage(), 2;
+        }
         else if (a == "--quick") quick = true;
         else if (a == "--shaders") shaders_only = true;
         else if (a == "--status" || a == "--verify" || a == "--add" || a == "--set-build" || a == "--play" ||
                  a == "--prepare" || a == "--import-build" || a == "--check-update" || a == "--update" || a == "--setup" ||
-                 a == "--move-library")
+                 a == "--move-library" || a == "--skip")
             action = a;
         else if (a == "--returns" || a == "--freeze")   // the short launch options: --play returns / --play freeze
             action = "--play", args.insert(args.begin(), a.substr(2));
-        else if (a == "--help" || a == "-h") return usage(), 0;
-        else if (a[0] == '-') return usage(), 2;
+        else if (a == "--help" || a == "-h") return usage(stdout), 0;
+        else if (a == "--version") return printf("%s\n", launcher_version().c_str()), 0;
+        else if (a[0] == '-') return fprintf(stderr, "launcher: unknown option %s\n", a.c_str()), usage(), 2;
         else args.push_back(a);
     }
+    bool starts_game = action == "--play" || action == "--skip";
+    // --fullscreen / --windowed / --resolution for the game: its settings for this run only (the environment wins
+    // over mp4.ini, cfg.c); mp4.ini keeps what the player chose in the menus
+    if (starts_game && game_fullscreen >= 0) setenv("MP4_FULLSCREEN", game_fullscreen ? "1" : "0", 1);
+    if (starts_game && !game_size.empty()) setenv("MP4_WINDOW_SIZE", game_size.c_str(), 1);
+
+    // The data folder (relocate.h). First start of a portable Country-Box with a library in ~/.local/share: the
+    // launcher window asks where it goes (keep it there / next to Country-Box / a folder the player picks); nothing
+    // moves without that answer (or --library-choice). Starting a game straight away (a Steam shortcut) just uses the
+    // old place. A library the player had already moved elsewhere only brings its record and tools over, unasked.
+    std::string notice;
+    const Migration *hub_migration = nullptr;   // the hub asks
+    Migration mig;
+    bool fixed = !home.empty() || (getenv("CB_LAUNCHER_HOME") && *getenv("CB_LAUNCHER_HOME"));
+    if (!fixed) mig = plan_migration();
+    if (!library_choice.empty() && !mig.ask())
+        fprintf(stderr, "launcher: --library-choice: nothing to choose (%s)\n",
+                mig.stay ? "already kept where it is" : mig.busy ? "a game is running from the old place" : "no old library to move");
+    if (mig.stay) set_base_home(mig.from);
+    else if (mig.needed) {
+        set_base_home(mig.from);   // until it has moved, the old place is this run's
+        bool run_now = !mig.ask() ? !mig.busy : !library_choice.empty();
+        if (mig.busy)
+            notice = "Your library stays in " + mig.from + " for now: a game is running from there. Open Country-Box again "
+                     "afterwards to choose where it goes.";
+        else if (mig.ask() && library_choice == "keep") {
+            std::string err;
+            if (keep_library_here(mig, err)) fprintf(stderr, "launcher: your library stays in %s\n", mig.from.c_str());
+            else notice = "Your library stays in " + mig.from + ", but that choice could not be recorded: " + err;
+            run_now = false;
+        } else if (!run_now && action.empty()) hub_migration = &mig;
+        else if (!run_now)
+            notice = "Your library is still in " + mig.from + ". Open Country-Box to choose where it goes (new in 1.0.7).";
+        if (run_now) {
+            std::string picked = !mig.ask() || library_choice == "here" ? "" : library_choice;
+            LibraryMove m;
+            std::thread t([&] { migrate_library(mig, picked, m); });
+            while (!m.finished.load()) {
+                std::this_thread::sleep_for(std::chrono::milliseconds(300));
+                if (m.total.load() > 0)
+                    fprintf(stderr, "progress %.3f moving your library to %s\n", (double)m.done.load() / (double)m.total.load(), m.to.c_str());
+            }
+            t.join();
+            if (m.ok) {
+                fprintf(stderr, "launcher: your library moved from %s to %s\n", mig.from.c_str(), m.to.c_str());
+                if (!m.backup.empty()) fprintf(stderr, "launcher: a copy of your saves is on your Desktop: %s\n", m.backup.c_str());
+            } else
+                notice = "Your library stays in " + mig.from + ": moving it failed. " + m.headline + " " + m.explain;
+        }
+        if (!notice.empty()) fprintf(stderr, "launcher: %s\n", notice.c_str());
+    } else if (!fixed && !base_note().empty()) {
+        notice = base_note();
+        fprintf(stderr, "launcher: %s\n", notice.c_str());
+    }
     Library lib(launcher_home(home));
+    // temporary files and caches inside the one folder too: the --data-dir one, else the data folder (portable)
+    if (fixed) contain_temp_files(lib.home());
+    else if (!portable_data_dir().empty()) contain_temp_files(default_launcher_home());
     lib.load();
-    if (action.empty()) return run_hub(lib, w, h, fullscreen, shot_dir, auto_steps);
+    if (action == "--skip") {
+        // GAME, else the one played last, else the first that can play; none ready: the launcher shows what to do
+        Game *g = args.empty() ? lib.last_played() : lib.find(args[0]);
+        if (!args.empty() && !g) return fprintf(stderr, "launcher: unknown game '%s'\n", args[0].c_str()), usage(), 2;
+        if (!g || !Library::playable(*g)) g = nullptr;
+        for (auto &c : lib.games())
+            if (!g && args.empty() && Library::playable(c)) g = &c;
+        if (!g) {
+            fprintf(stderr, "launcher: no game is ready to play yet; opening Country-Box\n");
+            return run_hub(lib, w, h, fullscreen, shot_dir, auto_steps, hub_migration, notice);
+        }
+        action = "--play";
+        args = {g->id};
+    }
+    if (action.empty()) return run_hub(lib, w, h, fullscreen, shot_dir, auto_steps, hub_migration, notice);
     if (action == "--check-update" || action == "--update") {
         std::string err;
         UpdateInfo i = update_check(lib.home(), &err);
@@ -412,7 +534,7 @@ int main(int argc, char **argv) {
         UpdateJob job(i, lib.home(), builds);
         while (!job.done()) SDL_Delay(20);
         printf("%s\n", update_result_json(job).c_str());
-        if (job.ok && getenv("APPIMAGE") && *getenv("APPIMAGE"))
+        if (job.ok && ((getenv("APPIMAGE") && *getenv("APPIMAGE")) || job.installed_dir.find("/app/") == std::string::npos))
             fprintf(stderr, "launcher: %s installed over %s (the previous one is kept as %s.old); start it again\n",
                     job.to_version.c_str(), job.installed_dir.c_str(), job.installed_dir.c_str());
         else if (job.ok)
@@ -434,9 +556,20 @@ int main(int argc, char **argv) {
             if (m.total.load() > 0) fprintf(stderr, "progress %.3f moving the library\n", (double)m.done.load() / (double)m.total.load());
         }
         t.join();
-        printf("{\"ok\": %s, \"from\": %s, \"to\": %s, \"headline\": %s, \"explain\": %s}\n", m.ok ? "true" : "false",
-               json_quote(m.from).c_str(), json_quote(m.to).c_str(), json_quote(m.headline).c_str(), json_quote(m.explain).c_str());
+        printf("{\"ok\": %s, \"from\": %s, \"to\": %s, \"backup\": %s, \"headline\": %s, \"explain\": %s}\n",
+               m.ok ? "true" : "false", json_quote(m.from).c_str(), json_quote(m.to).c_str(), json_quote(m.backup).c_str(),
+               json_quote(m.headline).c_str(), json_quote(m.explain).c_str());
         return m.ok ? 0 : 1;
+    }
+    if ((action == "--verify" || action == "--add") && args.size() == 1) {   // the copy says which game it is
+        const std::string &first = lib.games().front().id;
+        VerifyResult q = verify_copy(first, args[0], false);
+        std::string id = q.kind == VerifyResult::Ok ? first : q.kind == VerifyResult::OtherGame ? q.other_game : "";
+        if (id.empty()) {
+            printf("%s\n", verify_json(first, q).c_str());
+            return 1;
+        }
+        args.insert(args.begin(), id);
     }
     Game *g = args.empty() ? nullptr : lib.find(args[0]);
     if (action != "--status" && !g) {

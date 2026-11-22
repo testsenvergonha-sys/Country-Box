@@ -1,5 +1,28 @@
 # Changelog
 
+## 1.0.7 — 2026-11-21
+
+- **Windows support is on its way, thanks to [@testsenvergonha-sys](https://github.com/testsenvergonha-sys)**
+  ([#19](https://github.com/zWalt01/Country-Box/pull/19), closes [#5](https://github.com/zWalt01/Country-Box/issues/5)).
+  They ported Country-Box's core and launcher to Windows x86_64, a huge piece of work that I honestly never expected
+  anyone to do for this project. Thank you so much! The code is in this version; a Windows download isn't ready yet
+  (I don't have a Windows machine to build and test it), but it's coming very soon.
+- **Everything in one folder.** Country-Box now keeps everything it writes (your games' builds, saves, settings,
+  logs, its own Python and temporary files) in one folder, `Country-Box-data`, next to the AppImage (or next to the
+  extracted tarball). Delete that folder and Country-Box is gone completely; nothing is left in your home folder.
+- **You choose where, and your saves stay safe.** The first time you open 1.0.7 with your current library, it asks:
+  keep it where it is (nothing changes, and it won't ask again), move it next to Country-Box, or move it to a folder
+  you pick. Before anything moves, **a copy of your saves goes to your Desktop** (`Country-Box saves backup <date>`,
+  with a note on how to put them back), and the saves move with your games too, so they end up in two places.
+  *Move library* (About tab) works the same way. Starting a game straight from Steam never moves anything.
+- After moving, each game's next *Prepare update* rebuilds it from scratch (about 10 minutes for Returns HD on my
+  PC, under 3 for Tropical Freeze).
+- **A tarball download** next to the AppImage (`Country-Box-linux-x86_64.tar.gz`), for those who prefer not to use
+  AppImages. It updates itself the same way.
+- **Command-line options for everything** (`--help` lists them): `--skip [GAME]` starts the game you played last
+  without opening the launcher; `--fullscreen`, `--windowed` and `--resolution WxH` for that run; `--data-dir DIR`;
+  `--no-update`.
+
 ## 1.0.6 — 2026-11-17
 
 Heads up: this one is **lightly tested**. I'm buried in university exams right now, so instead of sitting on these
