@@ -43,7 +43,10 @@ def pkg(flag, names):
     r = subprocess.run(['pkg-config', flag, *names], capture_output=True, text=True)
     if r.returncode:
         sys.exit(f'pkg-config {flag} {" ".join(names)}: {r.stderr.strip()}')
-    return r.stdout.split()
+    # shlex, not str.split: the kit's pkg-config shell-quotes an -I whose path contains a space
+    # (Country-Box-data next to an AppImage in a folder like "DKC TF"). str.split turned
+    # that one flag into extra clang arguments (issue #20).
+    return shlex.split(r.stdout)
 
 
 def runtime_sources():
