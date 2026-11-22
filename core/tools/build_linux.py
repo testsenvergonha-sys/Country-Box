@@ -127,7 +127,6 @@ def ninja_text(gen, out, mods, gen_opt='-O1'):
         if deps.is_dir() and (deps / 'lib').is_dir():
             win_libs = ['-L' + a(deps / 'lib')] + win_libs
         libs_str = " ".join(win_libs)
-        link_cmd = 'clang++ -fuse-ld=lld -Wl,-Map=$out.map @$out.rsp $libs -o $out'
     else:
         rt_inc = inc + ['-I', a(out), '-I', a(RUNTIME / 'third_party'), '-I', a(RUNTIME / 'third_party' / 'vma'),
                         '-I', a(RUNTIME / 'third_party' / 'imgui')] + [a(f) for f in pkg('--cflags', PKGS)]
@@ -135,7 +134,13 @@ def ninja_text(gen, out, mods, gen_opt='-O1'):
         rt_flags_str = " ".join(RT_FLAGS + rt_inc)
         cxx_flags_str = " ".join(CXX_FLAGS + rt_inc)
         libs_str = " ".join(pkg("--libs", PKGS) + LINK_LIBS)
-        link_cmd = 'clang++ -fuse-ld=lld -Wl,-Map=$out.map @$out.rsp $libs -o $out'
+
+    clang_cmd = (shutil.which('clang') or 'clang').replace('\\', '/')
+    clangxx_cmd = (shutil.which('clang++') or 'clang++').replace('\\', '/')
+    if ' ' in clang_cmd:
+        clang_cmd = f'"{clang_cmd}"'
+    if ' ' in clangxx_cmd:
+        clangxx_cmd = f'"{clangxx_cmd}"'
 
     lines = [
         '# Written by tools/build_linux.py; do not edit.',
@@ -146,22 +151,22 @@ def ninja_text(gen, out, mods, gen_opt='-O1'):
         f'libs = {libs_str}',
         '',
         'rule cc_gen',
-        '  command = clang $genflags -MD -MF $out.d -c $in -o $out',
+        f'  command = {clang_cmd} $genflags -MD -MF $out.d -c $in -o $out',
         '  deps = gcc',
         '  depfile = $out.d',
         '  description = CC $in',
         'rule cc_rt',
-        '  command = clang $rtflags -MD -MF $out.d -c $in -o $out',
+        f'  command = {clang_cmd} $rtflags -MD -MF $out.d -c $in -o $out',
         '  deps = gcc',
         '  depfile = $out.d',
         '  description = CC $in',
         'rule cxx_rt',
-        '  command = clang++ $cxxflags -MD -MF $out.d -c $in -o $out',
+        f'  command = {clangxx_cmd} $cxxflags -MD -MF $out.d -c $in -o $out',
         '  deps = gcc',
         '  depfile = $out.d',
         '  description = CXX $in',
         'rule link',
-        f'  command = {link_cmd}',
+        f'  command = {clangxx_cmd} -fuse-ld=lld -Wl,-Map=$out.map @$out.rsp $libs -o $out',
         '  rspfile = $out.rsp',
         '  rspfile_content = $in_newline',
         '  description = LINK $out',

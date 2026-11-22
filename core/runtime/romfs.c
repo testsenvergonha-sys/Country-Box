@@ -131,9 +131,15 @@ static int open_read(const char *path) { return open(path, O_RDONLY | O_CLOEXEC)
 static Identity identity_of(int f) {
     struct stat st;
     need(fstat(f, &st) == 0, "file information");
+#ifdef _WIN32
+    return (Identity){(uint32_t)st.st_dev, 0, (uint64_t)st.st_ino, (uint64_t)st.st_size,
+                      (uint64_t)st.st_mtime * 1000000000ull,
+                      (uint64_t)st.st_ctime * 1000000000ull};
+#else
     return (Identity){(uint32_t)(st.st_dev ^ (st.st_dev >> 32)), 0, st.st_ino, (uint64_t)st.st_size,
                       (uint64_t)st.st_mtim.tv_sec * 1000000000ull + (uint64_t)st.st_mtim.tv_nsec,
                       (uint64_t)st.st_ctim.tv_sec * 1000000000ull + (uint64_t)st.st_ctim.tv_nsec};
+#endif
 }
 
 // ---- SHA-256 over a file range (rt_sha256_*, streaming)
