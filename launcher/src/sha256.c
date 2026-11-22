@@ -14,6 +14,8 @@
 #define WIN32_LEAN_AND_MEAN
 #endif
 #include <windows.h>
+#include <io.h>
+#include <fcntl.h>
 #define pthread_once_t INIT_ONCE
 #define PTHREAD_ONCE_INIT INIT_ONCE_STATIC_INIT
 static inline int win32_pthread_once(pthread_once_t *once_control, void (*init_routine)(void)) {
@@ -154,8 +156,7 @@ void sha256_final(Sha256 *s, uint8_t out[32]) {
     free(s);
 }
 
-int sha256_file(const char *path, char hex[65], volatile int64_t *progress, volatile int *cancel) {
-    int fd = open(path, O_RDONLY | O_CLOEXEC);
+static int sha256_fd(int fd, char hex[65], volatile int64_t *progress, volatile int *cancel) {
     if (fd < 0) return -1;
     posix_fadvise(fd, 0, 0, POSIX_FADV_SEQUENTIAL);
     enum { CHUNK = 4 << 20 };
@@ -182,3 +183,19 @@ int sha256_file(const char *path, char hex[65], volatile int64_t *progress, vola
     close(fd);
     return rc;
 }
+
+int sha256_file(const char *path, char hex[65], volatile int64_t *progress, volatile int *cancel) {
+#ifdef _WIN32
+    int fd = _open(path, _O_RDONLY | _O_BINARY);
+#else
+    int fd = open(path, O_RDONLY | O_CLOEXEC);
+#endif
+    return sha256_fd(fd, hex, progress, cancel);
+}
+
+#ifdef _WIN32
+int sha256_file_w(const wchar_t *path, char hex[65], volatile int64_t *progress, volatile int *cancel) {
+    int fd = _wopen(path, _O_RDONLY | _O_BINARY);
+    return sha256_fd(fd, hex, progress, cancel);
+}
+#endif
