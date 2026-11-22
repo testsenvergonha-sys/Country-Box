@@ -688,9 +688,14 @@ uint32_t mem_query(uint64_t a, RtMemoryInfo *out) {
     } else if (a - L.hostfn.base < L.hostfn.size) {
         r = (RtMemoryInfo){.base = L.hostfn.base, .size = L.hostfn.size, .state = ST_INACCESSIBLE};
     } else {
+        // Country-Box: a region no known one covers (host memory, or a gap between modules of the fixed window) is
+        // inaccessible, not Code RX as upstream reported it. The SDK's exception unwinder (nn::ro::detail::
+        // GetExceptionInfo) finds a module by walking Code RX regions back and forth from the throwing pc, and at the
+        // first C++ throw of Returns HD it walked from main's text into such a gap and read a MOD0 header there.
+        // Inaccessible is still never picked by a mapping search.
         taken_gap(a, &r.base, &r.size);
-        r.state = ST_CODE;
-        r.perm = PERM_RX;
+        r.state = ST_INACCESSIBLE;
+        r.perm = PERM_NONE;
     }
     // Moved stacks: the destination is Stack, the source Normal without access; free and normal regions around them
     // are clipped (MNG services.c).

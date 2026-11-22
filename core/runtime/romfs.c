@@ -518,6 +518,9 @@ static void index_path(char *out, size_t cap) {
     }
     need(plat_exe_path(out, cap), "executable path");
     char *slash = strrchr(out, '/');
+#ifdef _WIN32
+    if (!slash) slash = strrchr(out, '\\');
+#endif
     need(slash && (size_t)(slash + 1 - out) + 16 < cap, "executable path");
     strcpy(slash + 1, "romfs-index.bin");
 }
@@ -527,6 +530,9 @@ static void load_index(void) {
     index_path(path, sizeof path);
     snprintf(index_dir, sizeof index_dir, "%s", path);
     char *sep = strrchr(index_dir, '/');
+#ifdef _WIN32
+    if (!sep) sep = strrchr(index_dir, '\\');
+#endif
     if (sep) *sep = 0;
     else strcpy(index_dir, ".");
     if (!plat_file_exists(path))
