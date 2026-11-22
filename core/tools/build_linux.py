@@ -256,6 +256,13 @@ def main():
             dst = out / dll.name
             if not dst.exists() or dst.stat().st_size != dll.stat().st_size:
                 shutil.copy2(dll, dst)
+    if is_win:
+        for h264_path in (deps_bin / 'openh264.dll', ROOT.parent / 'build' / 'launcher' / 'openh264.dll'):
+            if h264_path.is_file():
+                dst = out / 'openh264.dll'
+                if not dst.exists() or dst.stat().st_size != h264_path.stat().st_size:
+                    shutil.copy2(h264_path, dst)
+                break
     # The shader translator next to the binary (runtime/gfx_shader.c looks there first): tools/build_xlate.py's output.
     xlate = ROOT / 'build' / 'xlate' / ('mp4_xlate.exe' if is_win else 'mp4_xlate')
     if not xlate.is_file() and is_win and (deps_bin / 'fe3h_xlate.exe').is_file():

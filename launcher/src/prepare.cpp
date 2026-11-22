@@ -923,6 +923,11 @@ bool PrepareJob::place_runtime_files() {
     if (fs::is_regular_file(xlate, ec)) {
         fs::copy_file(xlate, build_dir_ + "/mp4_xlate.exe", fs::copy_options::overwrite_existing, ec);
     }
+    std::string h264 = payload_ + "/build/launcher/openh264.dll";
+    if (!fs::is_regular_file(h264, ec)) h264 = payload_ + "/toolchain/deps-mingw/bin/openh264.dll";
+    if (fs::is_regular_file(h264, ec)) {
+        fs::copy_file(h264, build_dir_ + "/openh264.dll", fs::copy_options::overwrite_existing, ec);
+    }
 #else
     std::string xlate = payload_ + "/build/xlate/mp4_xlate";
     if (fs::is_regular_file(xlate, ec)) {
