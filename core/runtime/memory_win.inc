@@ -45,6 +45,7 @@ enum { ATTR_PERMISSION_LOCKED = 16 };
 #define R_INVALID_NEW_PERM 0xd801u
 #define R_INVALID_STATE 0xd401u     // InvalidCurrentMemory
 #define R_INVALID_REGION 0xdc01u
+#define R_OUT_OF_MEMORY 0xd001u
 #define R_LIMIT_REACHED 0x10801u
 
 static RtGuestLayout L;
@@ -411,15 +412,18 @@ int mem_is_shadow(uint64_t addr, uint64_t size) {
 
 // ---- 0x01 SetHeapSize
 uint32_t mem_set_heap_size(uint64_t size, uint64_t *addr) {
+    if (size % 0x200000) return R_INVALID_SIZE;
     AcquireSRWLockExclusive(&lock);
-    if (size > HEAP_CAP || size % 0x200000 || size + image_bytes() > L.pool) {
+    if (size > HEAP_CAP || size + image_bytes() > L.pool) {
         ReleaseSRWLockExclusive(&lock);
-        return R_INVALID_STATE;
+        return R_OUT_OF_MEMORY;
     }
     if (size > heap_size) commit(L.heap.base + heap_size, size - heap_size, "heap");
     if (size < heap_size) decommit(L.heap.base + size, heap_size - size, "heap");
     heap_size = size;
     ReleaseSRWLockExclusive(&lock);
+    rt_log("memory: heap %#llx+%#llx (pool %#llx, images %#llx)", (unsigned long long)L.heap.base, (unsigned long long)size,
+           (unsigned long long)L.pool, (unsigned long long)image_bytes());
     if (addr) *addr = L.heap.base;
     return R_OK;
 }
