@@ -21,6 +21,8 @@ saves/
 # Build y entornos
 build/
 dist/
+toolchain/
+refs/
 *.o
 *.so
 *.AppImage

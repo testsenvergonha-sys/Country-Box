@@ -6,6 +6,10 @@
 #pragma once
 #include <stdint.h>
 
+#if defined(_WIN32)
+#include "win32_compat.h"
+#endif
+
 #if defined(__x86_64__) || defined(_M_X64)
 #include "fp_x86.h"
 #endif

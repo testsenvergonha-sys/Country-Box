@@ -6,6 +6,11 @@
 #include <stdlib.h>
 #include <string.h>
 
+#ifdef _WIN32
+#define setenv(n, v, o) _putenv_s(n, v)
+#define unsetenv(n) _putenv_s(n, "")
+#endif
+
 #include "cfg.h"
 #include "host.h"
 #include "input.h"
@@ -20,6 +25,7 @@ int probe_cfg(void) {
     char path[1024];
     if (!plat_exe_path(path, sizeof path)) return 1;
     char *cut = strrchr(path, '\\');
+    if (!cut) cut = strrchr(path, '/');
     if (!cut) return 1;
     strcpy(cut + 1, "cfg-probe.ini");
     static const char ini[] =

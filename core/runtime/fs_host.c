@@ -34,6 +34,24 @@
 #include <time.h>
 #include <unistd.h>
 
+#ifdef _WIN32
+#include <direct.h>
+#include <io.h>
+#include <windows.h>
+#define lstat(p, st) stat(p, st)
+#define fsync(fd) _commit(fd)
+#define O_CLOEXEC O_NOINHERIT
+#define O_DIRECTORY 0
+#define host_mkdir(p) _mkdir(p)
+#define posix_fadvise(fd, off, len, adv) ((void)0)
+#define POSIX_FADV_SEQUENTIAL 0
+#define S_ISLNK(m) 0
+#define link(src, dst) (CreateHardLinkA(dst, src, NULL) ? 0 : -1)
+#define gmtime_r(tim, res) (gmtime_s(res, tim) == 0 ? (res) : NULL)
+#else
+#define host_mkdir(p) mkdir((p), 0777)
+#endif
+
 #include "fs.h"
 #include "host.h"
 #include "platform/platform.h"
@@ -82,10 +100,14 @@ static int attr_of(const char *p, struct stat *st) { return lstat(p, st); }
 
 // Flushes a directory's entries (a rename or a new file in it) to the disk; best effort, as NTFS journals them.
 static void sync_dir(const char *p) {
+#ifndef _WIN32
     int fd = open(p, O_RDONLY | O_DIRECTORY | O_CLOEXEC);
     if (fd < 0) return;
     fsync(fd);
     close(fd);
+#else
+    (void)p;
+#endif
 }
 
 // The parent directory of p, flushed.
@@ -116,7 +138,7 @@ int fs_save_busy(void) {
 }
 
 // ---- host directories
-static int make_dir(const char *p) { return mkdir(p, 0777) == 0 || errno == EEXIST; }
+static int make_dir(const char *p) { return host_mkdir(p) == 0 || errno == EEXIST; }
 
 // p and every missing parent.
 static void make_dirs(const char *p) {
@@ -287,7 +309,7 @@ static int same_file(const char *a, const char *b) {
 // flushes on the game thread). 0 on success.
 static int copy_tree(const char *src, const char *dst, const char *base, int durable, int *nfiles, int *nlinked,
                      uint64_t *bytes) {
-    if (mkdir(dst, 0777)) return -1;
+    if (host_mkdir(dst)) return -1;
     DIR *d = opendir(src);
     if (!d) return -1;
     int bad = 0;
@@ -719,7 +741,7 @@ static uint32_t create_cache(int index, int64_t size, int64_t journal) {
     if (index < 0 || size < 0 || journal < 0) return FS_R_INVALID_ARGUMENT;
     char p[PATH_CAP];
     cache_dir(index, p, sizeof p);
-    return mkdir(p, 0777) == 0 ? 0 : errno_result(errno);
+    return host_mkdir(p) == 0 ? 0 : errno_result(errno);
 }
 
 static uint32_t delete_cache(int index) {
@@ -1014,7 +1036,7 @@ static uint32_t create_directory(const char *path) {
     char p[PATH_CAP];
     uint32_t r = save_change_path(path, p, sizeof p);
     if (r) return r;
-    return mkdir(p, 0777) == 0 ? 0 : errno_result(errno);
+    return host_mkdir(p) == 0 ? 0 : errno_result(errno);
 }
 
 static uint32_t delete_recursive(const char *path) {
@@ -1042,7 +1064,7 @@ static uint32_t clean_recursive(const char *path) {
     struct stat st;
     if (attr_of(p, &st) || !S_ISDIR(st.st_mode)) return FS_R_PATH_NOT_FOUND;
     if (remove_tree(p)) return FS_R_INVALID_ARGUMENT;
-    return mkdir(p, 0777) == 0 ? 0 : errno_result(errno);
+    return host_mkdir(p) == 0 ? 0 : errno_result(errno);
 }
 
 static uint32_t rename_directory(const char *from, const char *to) {
@@ -1088,7 +1110,13 @@ static uint32_t list_dir(const char *p, int mode, DirItem **out, int64_t *count)
     while ((e = readdir(d))) {
         if (!strcmp(e->d_name, ".") || !strcmp(e->d_name, "..") || strlen(e->d_name) > 768) continue;
         struct stat st;
+#ifdef _WIN32
+        char full[PATH_CAP + 8];
+        snprintf(full, sizeof full, "%s/%s", p, e->d_name);
+        if (stat(full, &st)) continue;
+#else
         if (fstatat(dirfd(d), e->d_name, &st, AT_SYMLINK_NOFOLLOW)) continue;
+#endif
         int is_dir = S_ISDIR(st.st_mode);
         if (!(mode & (is_dir ? 1 : 2))) continue;
         if (n == cap) {

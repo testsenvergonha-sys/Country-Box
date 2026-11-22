@@ -1,3 +1,4 @@
+#ifndef _WIN32
 // From fe3h-pc-recomp runtime/prof_win.c @ 47ef99126793dbd13e4a475feb910a13ef6639b8 (MIT, Copyright (c) 2026 Jeff Aigner), copied with fe3h renamed to mp4 only.
 // From totk-pc-recomp runtime/prof_win.c @ c944f9f94520874f2a669add30dd08d29ee9f7b5 (MIT, Copyright (c) 2026 Valiantsin Dzerakh), copied with totk renamed to fe3h only. Country-Box: renamed from prof_win.c; samples by a queued signal per thread instead of SuspendThread, without call chains; /proc and sysfs instead of the Win32 process APIs (Linux).
 // Sampling profiler (MP4_PROFILE=<path>) and per-frame timing (MP4_TRACE=perf). tools/prof_report.py reads the profile.
@@ -684,3 +685,5 @@ void perf_present(uint64_t frame) {
     memset(wait_ns, 0, sizeof wait_ns);
     win_start = now;
 }
+
+#endif

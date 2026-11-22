@@ -11,13 +11,18 @@
 // @ a4b53a3, MIT, Copyright (c) 2026 Peiikai); the code is ours.
 #define VK_REC_IMPL
 #include <immintrin.h>
-#include <linux/futex.h>
-#include <sched.h>
 #include <stdlib.h>
 #include <string.h>
-#include <sys/syscall.h>
 #include <time.h>
+#ifdef _WIN32
+#include <windows.h>
+#include <synchapi.h>
+#else
+#include <linux/futex.h>
+#include <sched.h>
+#include <sys/syscall.h>
 #include <unistd.h>
+#endif
 
 #include "cfg.h"
 #include "host.h"
@@ -52,6 +57,20 @@ enum {
 
 static uint64_t now_ns(void) { return plat_now_ns(); }
 
+#ifdef _WIN32
+static void ev_set(void) {
+    __atomic_store_n(&wake_ev, 1, __ATOMIC_SEQ_CST);
+    WakeByAddressSingle((void*)&wake_ev);
+}
+
+// WaitForSingleObject(wake_ev, ms) on an auto-reset event: returns at once when set, else after a set or ms.
+static void ev_wait(long ms) {
+    if (__atomic_exchange_n(&wake_ev, 0, __ATOMIC_SEQ_CST)) return;
+    uint32_t zero = 0;
+    WaitOnAddress((volatile void*)&wake_ev, &zero, sizeof(zero), (DWORD)ms);
+    __atomic_store_n(&wake_ev, 0, __ATOMIC_SEQ_CST);
+}
+#else
 static void ev_set(void) {
     __atomic_store_n(&wake_ev, 1, __ATOMIC_SEQ_CST);
     syscall(SYS_futex, &wake_ev, FUTEX_WAKE_PRIVATE, 1, NULL, NULL, 0);
@@ -64,6 +83,7 @@ static void ev_wait(long ms) {
     syscall(SYS_futex, &wake_ev, FUTEX_WAIT_PRIVATE, 0, &to, NULL, 0);
     __atomic_store_n(&wake_ev, 0, __ATOMIC_SEQ_CST);
 }
+#endif
 
 // ---- consumer
 

@@ -1637,6 +1637,17 @@ static int storage_texels(const tex_t *t, const Region *g, const NVNcopyRegion *
     // The Windows build asked VirtualQuery whether the region at t->mem is committed through mem + min(size, 4 KiB);
     // here both ends of that range are read in one process_vm_readv, which fails instead of faulting on pages that
     // are not mapped readable (decommitted guest pages are PROT_NONE, memory.c). One system call, as VirtualQuery was.
+#ifdef _WIN32
+    MEMORY_BASIC_INFORMATION mbi;
+    if (!VirtualQuery(t->mem, &mbi, sizeof(mbi)) || mbi.State != MEM_COMMIT || (mbi.Protect & (PAGE_READONLY | PAGE_READWRITE)) == 0) {
+        static volatile long n_gone;
+        log_limited(&n_gone, "%sTexels: storage %p of texture serial %llu (%ux%ux%u format %#x, %#llx bytes) is not committed; pool %p mem %p size %#llx magic %#x",
+                    write ? "Write" : "Read", (void *)t->mem, (unsigned long long)t->serial, t->d.width, t->d.height, t->d.depth, t->d.format,
+                    (unsigned long long)t->L.size, (void *)t->pool, t->pool ? (void *)t->pool->mem : NULL,
+                    t->pool ? (unsigned long long)t->pool->size : 0ull, t->pool ? t->pool->magic : 0u);
+        return 0;
+    }
+#else
     uint8_t probe[2];
     uint64_t span = t->L.size < 4096 ? t->L.size : 4096;
     struct iovec lv = {probe, 2}, rv[2] = {{(void *)t->mem, 1}, {(void *)(t->mem + (span ? span - 1 : 0)), 1}};
@@ -1650,6 +1661,7 @@ static int storage_texels(const tex_t *t, const Region *g, const NVNcopyRegion *
                     t->pool ? (unsigned long long)t->pool->size : 0ull, t->pool ? t->pool->magic : 0u);
         return 0;
     }
+#endif
     for (int z = 0; z < g->nz; z++) {
         unsigned layer = g->is3d ? 0 : g->layer0 + (unsigned)r->zoffset + (unsigned)z;
         uint32_t slice = g->is3d ? (uint32_t)(r->zoffset + z) : 0;

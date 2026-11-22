@@ -205,7 +205,14 @@ static void list_paks(const char *dir, char (*paths)[1024], int *n, int cap, int
         snprintf(p, sizeof p, "%s/%s", dir, e->d_name);
         size_t l = strlen(e->d_name);
         if (l > 4 && !strcmp(e->d_name + l - 4, ".pak")) snprintf(paths[(*n)++], 1024, "%s", p);
+#ifdef _WIN32
+        else if (depth > 0) {
+            struct stat st;
+            if (stat(p, &st) == 0 && (st.st_mode & _S_IFDIR)) list_paks(p, paths, n, cap, depth - 1);
+        }
+#else
         else if (depth > 0 && e->d_type == DT_DIR) list_paks(p, paths, n, cap, depth - 1);
+#endif
     }
     closedir(d);
 }

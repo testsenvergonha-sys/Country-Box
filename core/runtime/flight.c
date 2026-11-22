@@ -14,9 +14,16 @@
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
+#ifndef _WIN32
 #include <sys/resource.h>
-#include <sys/stat.h>
 #include <sys/syscall.h>
+#else
+#include <direct.h>
+#include <windows.h>
+#define mkdir(d, m) _mkdir(d)
+#define localtime_r(tim, res) (localtime_s(res, tim) == 0 ? (res) : NULL)
+#endif
+#include <sys/stat.h>
 #include <time.h>
 #include <unistd.h>
 
@@ -269,7 +276,11 @@ static int write_png(const char *path, const uint8_t *rgba, PngBufs *pb) {
 static void dump_main(void *arg) {
     DumpJob *j = arg;
     uint64_t t_start = (plat_now_ns() / 1000000ull);
+#ifdef _WIN32
+    SetThreadPriority(GetCurrentThread(), THREAD_PRIORITY_BELOW_NORMAL);
+#else
     setpriority(PRIO_PROCESS, (id_t)syscall(SYS_gettid), 5);   // THREAD_PRIORITY_BELOW_NORMAL: a nice value is per thread here
+#endif
     mkdir(base_dir, 0777);
     if (mkdir(j->dir, 0777) != 0 && errno != EEXIST) {
         rt_log("flight: cannot create %s (%s)", j->dir, strerror(errno));

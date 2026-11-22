@@ -85,6 +85,12 @@ void level_run_clear(const char *source) {
 }
 
 // CPU time of every thread of the process (utime + stime, clock ticks) from /proc/self/task.
+#ifdef _WIN32
+static int task_times(TaskTime *out, int cap) {
+    (void)out; (void)cap;
+    return 0;
+}
+#else
 static int task_times(TaskTime *out, int cap) {
     DIR *d = opendir("/proc/self/task");
     if (!d) return 0;
@@ -113,6 +119,7 @@ static int task_times(TaskTime *out, int cap) {
     closedir(d);
     return n;
 }
+#endif
 
 static int cmp_float(const void *a, const void *b) {
     float x = *(const float *)a, y = *(const float *)b;

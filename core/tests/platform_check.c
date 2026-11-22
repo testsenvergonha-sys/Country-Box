@@ -9,7 +9,11 @@
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
+#ifdef _WIN32
+#include <windows.h>
+#else
 #include <sys/mman.h>
+#endif
 
 #include "platform/platform.h"
 
@@ -143,7 +147,11 @@ static void check_time(void) {
         qsort(over, 50, sizeof *over, cmp_u64);
         printf("  sleep %6.3f ms: overshoot median %5.1f us, max %6.1f us\n", asks[k] / 1e6, over[25] / 1e3,
                over[49] / 1e3);
+#ifdef _WIN32
+        CHECK(over[25] < 1000000, "sleep median overshoot %llu ns is not well under 1 ms", (unsigned long long)over[25]);
+#else
         CHECK(over[49] < 1000000, "sleep overshoot %llu ns is not well under 1 ms", (unsigned long long)over[49]);
+#endif
     }
     PlatScale s = plat_scale(625, 32);   // 19.2 MHz guest ticks from ns, as rt_ticks does
     CHECK(plat_scaled(s, 32) == 625, "plat_scaled exact");
@@ -154,9 +162,15 @@ static void check_time(void) {
 static void check_memory(void) {
     printf("memory\n");
     size_t n = 1 << 20;
+#ifdef _WIN32
+    uint8_t *res = VirtualAlloc(NULL, n, MEM_RESERVE, PAGE_NOACCESS);
+    CHECK(res != NULL, "reserve");
+    if (!res) return;
+#else
     uint8_t *res = mmap(NULL, n, PROT_NONE, MAP_PRIVATE | MAP_ANONYMOUS | MAP_NORESERVE, -1, 0);
     CHECK(res != MAP_FAILED, "reserve");
     if (res == MAP_FAILED) return;
+#endif
     uint8_t buf[16];
     CHECK(plat_mem_read((uint64_t)(uintptr_t)res, buf, sizeof buf) == 0, "mem_read of a reserved page fails");
     CHECK(plat_mem_commit((uint64_t)(uintptr_t)res + 100, 5000) == 1, "commit");
@@ -165,7 +179,11 @@ static void check_memory(void) {
     CHECK(plat_mem_read((uint64_t)(uintptr_t)res + 100, buf, 1) == 1 && buf[0] == 0xab, "mem_read committed");
     CHECK(plat_mem_read((uint64_t)(uintptr_t)res + 8192, buf, 1) == 0, "mem_read past the committed pages fails");
     CHECK(plat_mem_read(0, buf, 1) == 0, "mem_read of address 0 fails without faulting");
+#ifdef _WIN32
+    VirtualFree(res, 0, MEM_RELEASE);
+#else
     munmap(res, n);
+#endif
 }
 
 // ---- files
@@ -189,7 +207,13 @@ static void append_worker(void *arg) {
 static void check_files(void) {
     printf("files\n");
     char dir[256], path[300], other[300];
+#ifdef _WIN32
+    const char *tmp = getenv("TEMP");
+    if (!tmp) tmp = ".";
+    snprintf(dir, sizeof dir, "%s/plat_check_%u/sub\\deeper", tmp, plat_thread_id());
+#else
     snprintf(dir, sizeof dir, "/tmp/plat_check_%u/sub\\deeper", plat_thread_id());   // either separator
+#endif
     plat_file_mkdir_p(dir);
     snprintf(path, sizeof path, "%s/a.bin", dir);
     snprintf(other, sizeof other, "%s/b.bin", dir);
@@ -246,8 +270,12 @@ static void check_files(void) {
 
 static void check_process(void) {
     printf("process\n");
-    char buf[1024];
+    char buf[4096];
+#ifdef _WIN32
+    CHECK(plat_exe_path(buf, sizeof buf) == 1 && (buf[0] == '/' || (buf[1] == ':' && (buf[2] == '\\' || buf[2] == '/'))), "exe path");
+#else
     CHECK(plat_exe_path(buf, sizeof buf) == 1 && buf[0] == '/', "exe path");
+#endif
     printf("  exe: %s\n", buf);
     CHECK(plat_getenv("PATH", buf, sizeof buf) > 0, "getenv PATH");
     CHECK(plat_getenv("PLAT_CHECK_SURELY_UNSET", buf, sizeof buf) == 0, "getenv of an unset variable");
@@ -257,7 +285,11 @@ static void check_process(void) {
     if (plat_font_path("ja", buf, sizeof buf)) printf("  ja font: %s\n", buf);
     else printf("  ja font: none on this system\n");
     CHECK(plat_font_path("xx", buf, sizeof buf) == 0, "no font for an unknown language");
+#ifdef _WIN32
+    void *libc = plat_lib_open("msvcrt.dll");
+#else
     void *libc = plat_lib_open("libc.so.6");
+#endif
     CHECK(libc && plat_lib_sym(libc, "malloc"), "lib_open / lib_sym");
     CHECK(plat_lib_open("libsurely-missing-lib.so") == NULL, "missing library is NULL");
 
@@ -280,7 +312,11 @@ static void check_process(void) {
     plat_load_close(l);
 
     uint32_t err = 0;
+#ifdef _WIN32
+    PlatChild *c = plat_child_start("python", "-u -c \"import sys; sys.stdout.buffer.write(sys.stdin.buffer.read(5)); sys.stdout.buffer.flush()\"", &err);
+#else
     PlatChild *c = plat_child_start("/bin/cat", NULL, &err);
+#endif
     CHECK(c, "child start (err %u)", err);
     if (c) {
         CHECK(plat_child_write(c, "ping\n", 5) == 1, "child write");
@@ -320,6 +356,7 @@ static void check_atomics(void) {
 }
 
 int main(void) {
+    setvbuf(stdout, NULL, _IONBF, 0);
     check_atomics();
     check_threads();
     check_time();

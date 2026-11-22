@@ -1,3 +1,6 @@
+#ifdef _WIN32
+#include "kernel_win.inc"
+#else
 // From fe3h-pc-recomp runtime/kernel.c @ 47ef99126793dbd13e4a475feb910a13ef6639b8 (MIT, Copyright (c) 2026 Jeff Aigner), copied with fe3h renamed to mp4; MP4's main thread stack size.
 // From totk-pc-recomp runtime/kernel.c @ c944f9f94520874f2a669add30dd08d29ee9f7b5 (MIT, Copyright (c) 2026 Valiantsin Dzerakh), renamed to fe3h; FE3H's main thread stack size; FE3H_THREAD_DUMP.
 // Adapted from MacNativeGames games/totk/runtime/threads.c @ b75be8c (MIT, Copyright (c) 2026 MacNativeGames
@@ -3051,3 +3054,5 @@ void kern_ss_drop(int slot) {
     unlock();
     ss_defer_release();
 }
+
+#endif

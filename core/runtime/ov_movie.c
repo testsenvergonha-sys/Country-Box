@@ -142,7 +142,11 @@ static int pace_on(void) {
     }
     return g_pace;
 }
+#ifdef _WIN32
+#define OPENH264_LIB "openh264.dll"
+#else
 #define OPENH264_LIB "libopenh264.so.8"   // Country-Box: openh264 2.6 (was .so.7, 2.4)
+#endif
 static long (*p_create)(ISVCDecoder **);
 static void (*p_destroy)(ISVCDecoder *);
 

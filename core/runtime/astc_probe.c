@@ -361,7 +361,11 @@ static void timing(VkCtx *c, uint32_t bw, uint32_t bh) {
 }
 
 int probe_astc(void) {
-    setenv("MP4_ASTC_BC", "1", 1);   // also builds the BC3 encoder; the RGBA8 cases pass bc 0 and do not use it
+#ifdef _WIN32
+    _putenv_s("MP4_ASTC_BC", "1");
+#else
+    setenv("MP4_ASTC_BC", "1", 1);
+#endif
     if (!vk_init()) { printf("probe-astc: FAIL vk_init\n"); return 1; }
     VkCtx *c = vk_ctx();
     printf("probe-astc: GPU %s, textureCompressionASTC_LDR %d, mode %d\n", c->props.deviceName, c->has_astc_ldr,
