@@ -2,6 +2,9 @@
 # Country-Box build kit: answers pkg-config for exactly what Country-Box builds against (core/tools/build_linux.py
 # PKGS and the launcher's tool check). Headers and libraries are in the kit's sysroot; Opus and vpx link statically
 # (libvpx's soname differs between distributions), SDL 3, Vulkan and zlib from the machine at run time.
+# A folder with a space (Country-Box-data next to the AppImage, issue #20) must stay one -I word.
+# printf %q is not in dash, which is /bin/sh on Debian and Ubuntu.
+shell_quote() { printf "'%s'" "$(printf '%s' "$1" | sed "s/'/'\\\\''/g")"; }
 d=${0%/*}; [ "$d" = "$0" ] && d=.; K=$(cd "$d/.." && pwd)
 mode=--exists names=
 for a in "$@"; do
@@ -16,11 +19,12 @@ for n in $names; do
     case $n in
     sdl3) c= l=-lSDL3 v=3 ;;
     vulkan) c= l=-lvulkan v=1.4 ;;
-    opus) c="-I$K/sysroot/usr/include/opus" l="-l:libopus.a -lm" v=1 ;;
+    opus) c="-I$(shell_quote "$K/sysroot/usr/include/opus")" l="-l:libopus.a -lm" v=1 ;;
     vpx) c= l="-l:libvpx.a -lpthread -lm" v=1 ;;
     zlib) c= l=-lz v=1 ;;
     *) echo "Package $n was not found in the Country-Box build kit" >&2; exit 1 ;;
     esac
     case $mode in --cflags) out="$out $c" ;; --libs) out="$out $l" ;; --modversion) out="$out $v" ;; esac
 done
-[ "$mode" = --exists ] || echo $out
+# Quoted: echo $out would split the path and drop the quotes before build_linux.py sees them.
+[ "$mode" = --exists ] || printf '%s\n' "$out"
